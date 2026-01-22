@@ -7,3 +7,6 @@ This module handles:
 - Error handling
 - Route definitions
 """
+from src.api.main import app
+
+__all__ = ["app"]

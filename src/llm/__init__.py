@@ -7,3 +7,9 @@ This module handles all LLM interactions:
 - Response parsing
 - Error handling for LLM failures
 """
+from src.llm.client import LLMClient, LLMError
+
+__all__ = [
+    "LLMClient",
+    "LLMError",
+]
