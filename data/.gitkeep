@@ -1,0 +1,2 @@
+# This file ensures the data directory is tracked by Git
+# Place your CSV files here for loading into PostgreSQL
