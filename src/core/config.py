@@ -106,6 +106,12 @@ def get_settings() -> Settings:
     Raises:
         ValueError: If required environment variables are missing
     """
+    # Get database URL and fix dialect if needed
+    # Some providers use postgres:// but SQLAlchemy requires postgresql://
+    database_url = _get_env("DATABASE_URL")
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    
     return Settings(
         # Application
         app_name=_get_env("APP_NAME", "DataAnalyticsAssistant"),
@@ -113,7 +119,7 @@ def get_settings() -> Settings:
         log_level=_get_env("LOG_LEVEL", "DEBUG"),
         
         # Database
-        database_url=_get_env("DATABASE_URL"),
+        database_url=database_url,
         
         # LLM
         groq_api_key=_get_env("GROQ_API_KEY"),

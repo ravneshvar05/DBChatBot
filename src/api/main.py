@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.config import get_settings
 from src.core.logging_config import setup_logging, get_logger
-from src.api.routes import chat_router, health_router
+from src.api.routes import chat_router, health_router, database_router
 from src.models.chat import ErrorResponse
 
 
@@ -90,6 +90,7 @@ if settings.is_development():
 # Register routers
 app.include_router(health_router)
 app.include_router(chat_router)
+app.include_router(database_router)
 
 
 # Global exception handler
