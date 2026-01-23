@@ -1,22 +1,19 @@
 """
-CSV Data Loader - Load CSV files into PostgreSQL.
+CSV Data Loader - Optimized for Large Files.
 
-This module handles:
-- Reading CSV files from the data/ directory
-- Creating tables with inferred schemas
-- Loading data into PostgreSQL
-- Progress logging
-
-Why a dedicated loader:
-1. One-time data ingestion is separate from query logic
-2. Schema inference handles various CSV formats
-3. Clear error handling for data issues
+Key optimizations:
+1. Streaming reads (don't load all rows into memory)
+2. Larger batch sizes (5000 instead of 1000)
+3. Bulk INSERT with executemany
+4. Progress logging every batch
+5. Schema inference from first N rows only
 """
 import csv
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Iterator
+from io import StringIO
 
-from sqlalchemy import text, Table, Column, MetaData, String, Integer, Float, Boolean, DateTime
+from sqlalchemy import text, Table, Column, MetaData, String, Integer, Float, Boolean
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.connection import get_database
@@ -24,31 +21,23 @@ from src.core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+# Optimized settings
+BATCH_SIZE = 5000  # Larger batches = fewer DB round-trips
+SAMPLE_SIZE = 100  # Rows to sample for type inference
+
 
 class CSVLoader:
     """
     Loads CSV files into PostgreSQL tables.
     
-    This class handles the complete ETL process:
-    1. Read CSV file
-    2. Infer column types
-    3. Create table (drop if exists)
-    4. Insert data in batches
-    
-    Example:
-        >>> loader = CSVLoader()
-        >>> loader.load_file("data/products.csv", "products")
-        >>> loader.load_all_csvs()  # Load all CSVs in data/
+    Optimized for large files (10k+ rows):
+    - Streams CSV instead of loading into memory
+    - Uses bulk inserts with large batches
+    - Logs progress during loading
     """
     
     def __init__(self, data_dir: Optional[Path] = None):
-        """
-        Initialize CSV loader.
-        
-        Args:
-            data_dir: Directory containing CSV files.
-                     Defaults to 'data/' in project root.
-        """
+        """Initialize CSV loader."""
         self.db = get_database()
         self.data_dir = data_dir or Path(__file__).parent.parent.parent / "data"
         self.metadata = MetaData()
@@ -59,72 +48,52 @@ class CSVLoader:
         file_path: Path | str,
         table_name: Optional[str] = None,
         drop_existing: bool = True,
-        batch_size: int = 1000
+        batch_size: int = BATCH_SIZE
     ) -> int:
         """
-        Load a CSV file into a PostgreSQL table.
+        Load a CSV file into PostgreSQL.
         
         Args:
             file_path: Path to CSV file
-            table_name: Target table name (defaults to filename without extension)
-            drop_existing: If True, drop existing table before loading
-            batch_size: Number of rows to insert per batch
+            table_name: Target table name (defaults to filename)
+            drop_existing: Drop existing table before loading
+            batch_size: Rows per batch insert
             
         Returns:
             Number of rows loaded
-            
-        Raises:
-            FileNotFoundError: If CSV file doesn't exist
-            SQLAlchemyError: If database operation fails
         """
         file_path = Path(file_path)
         
         if not file_path.exists():
             raise FileNotFoundError(f"CSV file not found: {file_path}")
         
-        # Use filename as table name if not specified
         if table_name is None:
             table_name = file_path.stem.lower().replace(" ", "_").replace("-", "_")
         
-        logger.info(f"Loading CSV: {file_path} -> table '{table_name}'")
+        logger.info(f"Loading CSV: {file_path.name} -> table '{table_name}'")
         
-        # Read CSV and infer schema
-        with open(file_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            headers = reader.fieldnames
-            
-            if not headers:
-                raise ValueError(f"CSV file has no headers: {file_path}")
-            
-            # Read all rows to infer types and load data
-            rows = list(reader)
+        # Step 1: Read headers and sample rows for schema inference
+        headers, sample_rows, total_estimate = self._read_headers_and_sample(file_path)
         
-        if not rows:
-            logger.warning(f"CSV file is empty: {file_path}")
-            return 0
+        if not headers:
+            raise ValueError(f"No valid headers in CSV: {file_path}")
         
-        # Infer column types from data
-        column_types = self._infer_column_types(headers, rows)
+        logger.info(f"Found {len(headers)} columns, ~{total_estimate} rows estimated")
         
-        # Create table
+        # Step 2: Infer column types from sample
+        column_types = self._infer_column_types(headers, sample_rows)
+        
+        # Step 3: Create table
         self._create_table(table_name, column_types, drop_existing)
         
-        # Insert data in batches
-        row_count = self._insert_data(table_name, headers, rows, batch_size)
+        # Step 4: Stream and insert data
+        row_count = self._stream_insert(file_path, table_name, headers, batch_size)
         
-        logger.info(f"Loaded {row_count} rows into '{table_name}'")
+        logger.info(f"✓ Loaded {row_count:,} rows into '{table_name}'")
         return row_count
     
     def load_all_csvs(self, drop_existing: bool = True) -> Dict[str, int]:
-        """
-        Load all CSV files from the data directory.
-        
-        Args:
-            drop_existing: If True, drop existing tables
-            
-        Returns:
-            Dictionary mapping table names to row counts
-        """
+        """Load all CSV files from the data directory."""
         results = {}
         csv_files = list(self.data_dir.glob("*.csv"))
         
@@ -140,44 +109,70 @@ class CSVLoader:
                 row_count = self.load_file(csv_file, table_name, drop_existing)
                 results[table_name] = row_count
             except Exception as e:
-                logger.error(f"Failed to load {csv_file}: {e}")
-                results[csv_file.stem] = -1  # Mark as failed
+                logger.error(f"Failed to load {csv_file.name}: {e}")
+                results[csv_file.stem] = -1
         
-        logger.info(f"CSV loading complete: {sum(v for v in results.values() if v > 0)} total rows")
+        total = sum(v for v in results.values() if v > 0)
+        logger.info(f"CSV loading complete: {total:,} total rows")
         return results
+    
+    def _read_headers_and_sample(
+        self, 
+        file_path: Path
+    ) -> tuple[List[str], List[Dict], int]:
+        """Read headers and sample rows without loading entire file."""
+        # Get file size for estimation
+        file_size = file_path.stat().st_size
+        
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            reader = csv.DictReader(f)
+            raw_headers = reader.fieldnames or []
+            
+            # Filter empty headers
+            headers = [h for h in raw_headers if h and h.strip()]
+            
+            # Read sample rows
+            sample_rows = []
+            for i, row in enumerate(reader):
+                if i >= SAMPLE_SIZE:
+                    break
+                sample_rows.append(row)
+        
+        # Estimate total rows based on file size
+        if sample_rows:
+            # Rough estimate: file_size / avg_row_size
+            avg_row_size = file_size / (len(sample_rows) * 10)  # Conservative estimate
+            total_estimate = max(len(sample_rows), int(file_size / max(avg_row_size, 100)))
+        else:
+            total_estimate = 0
+        
+        return headers, sample_rows, total_estimate
     
     def _infer_column_types(
         self,
         headers: List[str],
         rows: List[Dict[str, str]]
     ) -> Dict[str, type]:
-        """
-        Infer SQLAlchemy column types from CSV data.
-        
-        Samples rows to determine the best type for each column.
-        Falls back to String for ambiguous types.
-        """
+        """Infer column types from sample rows."""
         column_types = {}
         
         for header in headers:
-            # Sample values from multiple rows
             sample_values = [
                 row.get(header, "")
-                for row in rows[:100]  # Sample first 100 rows
+                for row in rows
                 if row.get(header, "").strip()
-            ]
+            ][:50]  # Use first 50 non-empty values
             
             if not sample_values:
                 column_types[header] = String
                 continue
             
-            # Try to infer type
             column_types[header] = self._infer_type(sample_values)
         
         return column_types
     
     def _infer_type(self, values: List[str]) -> type:
-        """Infer the best SQLAlchemy type for a list of values."""
+        """Infer SQLAlchemy type for a list of values."""
         # Try Integer
         try:
             for v in values:
@@ -194,12 +189,6 @@ class CSVLoader:
         except (ValueError, TypeError):
             pass
         
-        # Try Boolean
-        bool_values = {'true', 'false', 'yes', 'no', '1', '0', 't', 'f'}
-        if all(v.lower() in bool_values for v in values):
-            return Boolean
-        
-        # Default to String
         return String
     
     def _create_table(
@@ -208,88 +197,100 @@ class CSVLoader:
         column_types: Dict[str, type],
         drop_existing: bool
     ):
-        """Create the table in PostgreSQL."""
+        """Create table in PostgreSQL."""
         with self.db.get_session() as session:
-            # Drop existing table if requested
             if drop_existing:
                 session.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
                 session.commit()
                 logger.debug(f"Dropped existing table '{table_name}'")
             
-            # Build column definitions
             columns = []
             for col_name, col_type in column_types.items():
-                # Sanitize column name
-                safe_name = col_name.lower().replace(" ", "_").replace("-", "_")
+                if not col_name or not col_name.strip():
+                    continue
                 
-                # Set appropriate length for String columns
+                safe_name = col_name.lower().replace(" ", "_").replace("-", "_")
+                if not safe_name:
+                    safe_name = f"col_{len(columns)}"
+                
                 if col_type == String:
-                    columns.append(Column(safe_name, String(500)))
+                    columns.append(Column(safe_name, String(2000)))
                 else:
                     columns.append(Column(safe_name, col_type))
             
-            # Create table
+            if not columns:
+                raise ValueError("No valid columns to create")
+            
             table = Table(table_name, self.metadata, *columns, extend_existing=True)
             table.create(self.db.engine, checkfirst=True)
             
-            logger.debug(f"Created table '{table_name}' with {len(columns)} columns")
+            logger.info(f"Created table '{table_name}' with {len(columns)} columns")
     
-    def _insert_data(
+    def _stream_insert(
         self,
+        file_path: Path,
         table_name: str,
         headers: List[str],
-        rows: List[Dict[str, str]],
         batch_size: int
     ) -> int:
-        """Insert data in batches for efficiency."""
-        # Sanitize header names to match column names
+        """Stream CSV and insert in batches."""
+        # Build column mapping
         header_mapping = {
             h: h.lower().replace(" ", "_").replace("-", "_")
             for h in headers
+            if h and h.strip()
         }
         
-        row_count = 0
+        columns = list(header_mapping.values())
+        column_list = ", ".join([f'"{col}"' for col in columns])
+        placeholders = ", ".join([f":{col}" for col in columns])
         
-        with self.db.get_session() as session:
-            for i in range(0, len(rows), batch_size):
-                batch = rows[i:i + batch_size]
-                
-                # Convert rows to use sanitized column names
-                clean_batch = []
-                for row in batch:
-                    clean_row = {
-                        header_mapping[k]: self._convert_value(v)
-                        for k, v in row.items()
-                        if k in header_mapping
-                    }
-                    clean_batch.append(clean_row)
-                
-                # Build INSERT statement
-                columns = list(header_mapping.values())
-                placeholders = ", ".join([f":{col}" for col in columns])
-                column_list = ", ".join([f'"{col}"' for col in columns])
-                
-                insert_sql = text(
-                    f'INSERT INTO "{table_name}" ({column_list}) VALUES ({placeholders})'
-                )
-                
-                session.execute(insert_sql, clean_batch)
-                row_count += len(batch)
-                
-                logger.debug(f"Inserted batch: {row_count}/{len(rows)} rows")
+        insert_sql = text(
+            f'INSERT INTO "{table_name}" ({column_list}) VALUES ({placeholders})'
+        )
+        
+        row_count = 0
+        batch = []
+        
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            reader = csv.DictReader(f)
             
-            session.commit()
+            for row in reader:
+                # Convert row
+                clean_row = {}
+                for orig_header, safe_name in header_mapping.items():
+                    value = row.get(orig_header, "")
+                    clean_row[safe_name] = self._convert_value(value)
+                
+                batch.append(clean_row)
+                
+                # Insert batch when full
+                if len(batch) >= batch_size:
+                    self._execute_batch(insert_sql, batch)
+                    row_count += len(batch)
+                    logger.info(f"  Progress: {row_count:,} rows inserted...")
+                    batch = []
+            
+            # Insert remaining rows
+            if batch:
+                self._execute_batch(insert_sql, batch)
+                row_count += len(batch)
         
         return row_count
     
+    def _execute_batch(self, insert_sql, batch: List[Dict]):
+        """Execute batch insert."""
+        with self.db.get_session() as session:
+            session.execute(insert_sql, batch)
+    
     def _convert_value(self, value: str) -> Any:
-        """Convert string value to appropriate Python type."""
+        """Convert string to appropriate Python type."""
         if not value or value.strip() == "":
             return None
         
         value = value.strip()
         
-        # Try integer
+        # Try int
         try:
             return int(value)
         except ValueError:
@@ -301,11 +302,4 @@ class CSVLoader:
         except ValueError:
             pass
         
-        # Try boolean
-        if value.lower() in ('true', 'yes', '1', 't'):
-            return True
-        if value.lower() in ('false', 'no', '0', 'f'):
-            return False
-        
-        # Return as string
         return value
