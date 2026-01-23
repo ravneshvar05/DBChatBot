@@ -197,10 +197,11 @@ class CSVLoader:
         column_types: Dict[str, type],
         drop_existing: bool
     ):
-        """Create table in PostgreSQL."""
+        """Create table in database (MySQL/PostgreSQL compatible)."""
         with self.db.get_session() as session:
             if drop_existing:
-                session.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
+                # Use simple DROP TABLE without CASCADE for MySQL compatibility
+                session.execute(text(f'DROP TABLE IF EXISTS `{table_name}`'))
                 session.commit()
                 logger.debug(f"Dropped existing table '{table_name}'")
             
@@ -242,11 +243,12 @@ class CSVLoader:
         }
         
         columns = list(header_mapping.values())
-        column_list = ", ".join([f'"{col}"' for col in columns])
+        # Use backticks for MySQL compatibility
+        column_list = ", ".join([f'`{col}`' for col in columns])
         placeholders = ", ".join([f":{col}" for col in columns])
         
         insert_sql = text(
-            f'INSERT INTO "{table_name}" ({column_list}) VALUES ({placeholders})'
+            f'INSERT INTO `{table_name}` ({column_list}) VALUES ({placeholders})'
         )
         
         row_count = 0

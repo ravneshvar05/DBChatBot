@@ -7,8 +7,12 @@ Services contain the core application logic:
 - Orchestrate between LLM, database, and memory layers
 """
 from src.services.chat_service import ChatService, ChatServiceError
+from src.services.sql_service import SQLService, SQLResponse, get_sql_service
 
 __all__ = [
     "ChatService",
     "ChatServiceError",
+    "SQLService",
+    "SQLResponse",
+    "get_sql_service",
 ]

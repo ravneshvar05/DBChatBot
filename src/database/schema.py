@@ -108,10 +108,10 @@ class SchemaInspector:
                     default=col.get('default'),
                 ))
             
-            # Get row count
+            # Get row count (using backticks for MySQL compatibility)
             with self.db.get_session() as session:
                 result = session.execute(
-                    text(f'SELECT COUNT(*) FROM "{table_name}"')
+                    text(f'SELECT COUNT(*) FROM `{table_name}`')
                 )
                 row_count = result.scalar()
             

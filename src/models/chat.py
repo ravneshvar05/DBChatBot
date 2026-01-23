@@ -6,14 +6,9 @@ They provide:
 - Type validation
 - Automatic documentation
 - Request/response serialization
-
-Why separate models:
-1. Clear API contract
-2. Decoupled from internal representations
-3. Version control for API changes
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -24,19 +19,22 @@ class ChatRequest(BaseModel):
     Attributes:
         message: The user's natural language question or statement.
         session_id: Optional session identifier for multi-turn conversations.
-                   If not provided, a new session will be created.
+        mode: Query mode - 'chat' for general, 'sql' for database queries.
     """
     message: str = Field(
         ...,
         min_length=1,
         max_length=2000,
         description="The user's message or question",
-        examples=["What were the top 5 products last month?"]
+        examples=["What are the top 5 highest rated movies?"]
     )
     session_id: Optional[str] = Field(
         default=None,
-        description="Session ID for multi-turn conversations. Optional in Phase 1.",
-        examples=["550e8400-e29b-41d4-a716-446655440000"]
+        description="Session ID for multi-turn conversations"
+    )
+    mode: str = Field(
+        default="sql",
+        description="Query mode: 'chat' for general conversation, 'sql' for database queries"
     )
 
 
@@ -44,14 +42,11 @@ class ChatResponse(BaseModel):
     """
     Response model for the /chat endpoint.
     
-    Attributes:
-        message: The assistant's response to the user's question.
-        session_id: Session identifier for tracking conversations.
-        timestamp: When the response was generated (ISO 8601 format).
+    Includes natural language answer and optionally the generated SQL.
     """
     message: str = Field(
         ...,
-        description="The assistant's response"
+        description="The assistant's natural language response"
     )
     session_id: str = Field(
         ...,
@@ -61,56 +56,31 @@ class ChatResponse(BaseModel):
         default_factory=datetime.utcnow,
         description="Response generation timestamp"
     )
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "message": "Based on the sales data, the top 5 products last month were...",
-                "session_id": "550e8400-e29b-41d4-a716-446655440000",
-                "timestamp": "2024-01-15T10:30:45.123456"
-            }
-        }
+    # SQL-specific fields
+    sql: Optional[str] = Field(
+        default=None,
+        description="Generated SQL query (if mode='sql')"
+    )
+    data: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Query results (if mode='sql')"
+    )
+    row_count: Optional[int] = Field(
+        default=None,
+        description="Number of rows returned"
+    )
 
 
 class HealthResponse(BaseModel):
-    """
-    Response model for the /health endpoint.
-    
-    Used for monitoring and load balancer health checks.
-    """
-    status: str = Field(
-        default="healthy",
-        description="Current service status"
-    )
-    version: str = Field(
-        ...,
-        description="Application version"
-    )
-    timestamp: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="Health check timestamp"
-    )
+    """Response model for the /health endpoint."""
+    status: str = Field(default="healthy")
+    version: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ErrorResponse(BaseModel):
-    """
-    Standard error response model.
-    
-    All API errors return this structure for consistent error handling.
-    """
-    error: str = Field(
-        ...,
-        description="Error type or code"
-    )
-    message: str = Field(
-        ...,
-        description="Human-readable error message"
-    )
-    details: Optional[str] = Field(
-        default=None,
-        description="Additional error details (development only)"
-    )
-    timestamp: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="When the error occurred"
-    )
+    """Standard error response model."""
+    error: str
+    message: str
+    details: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
