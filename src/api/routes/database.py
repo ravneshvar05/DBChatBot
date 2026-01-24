@@ -2,13 +2,16 @@
 Database Routes - API endpoints for database operations.
 
 These endpoints allow:
-- Loading CSV data into PostgreSQL
+- Uploading CSV files
+- Loading CSV data into database
 - Inspecting database schema
 - Testing queries (development only)
 """
+import shutil
+from pathlib import Path
 from typing import Dict, List, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
 from src.core.config import get_settings
@@ -26,6 +29,9 @@ router = APIRouter(
     prefix="/database",
     tags=["Database"],
 )
+
+# Data directory for CSV files
+DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
 
 
 # Response models
@@ -49,6 +55,14 @@ class LoadResponse(BaseModel):
     message: str
 
 
+class UploadResponse(BaseModel):
+    """Response from file upload."""
+    filename: str
+    table_name: str
+    message: str
+    rows_loaded: int
+
+
 class QueryRequest(BaseModel):
     """Request to execute a test query."""
     sql: str = Field(..., description="SQL query to execute")
@@ -63,6 +77,119 @@ class QueryResponse(BaseModel):
     columns: List[str]
     execution_time_ms: float
     error: str | None = None
+
+
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    summary="Upload and load a CSV file",
+    description="""
+    Upload a CSV file and load it into the database.
+    
+    The file will be:
+    1. Saved to the data/ directory
+    2. Automatically loaded into a database table
+    
+    The table name is derived from the filename (e.g., products.csv → products table).
+    """
+)
+async def upload_csv(
+    file: UploadFile = File(..., description="CSV file to upload")
+) -> UploadResponse:
+    """Upload a CSV file and load it into the database."""
+    
+    # Validate file type
+    if not file.filename or not file.filename.endswith('.csv'):
+        raise HTTPException(
+            status_code=400,
+            detail="Only CSV files are allowed"
+        )
+    
+    # Sanitize filename
+    safe_filename = file.filename.replace(" ", "_").lower()
+    file_path = DATA_DIR / safe_filename
+    
+    logger.info(f"Uploading CSV: {safe_filename}")
+    
+    try:
+        # Ensure data directory exists
+        DATA_DIR.mkdir(exist_ok=True)
+        
+        # Save uploaded file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        logger.info(f"Saved file to: {file_path}")
+        
+        # Load into database
+        loader = CSVLoader()
+        table_name = file_path.stem.lower().replace(" ", "_").replace("-", "_")
+        rows_loaded = loader.load_file(file_path, table_name, drop_existing=True)
+        
+        return UploadResponse(
+            filename=safe_filename,
+            table_name=table_name,
+            message=f"Successfully loaded {rows_loaded} rows into table '{table_name}'",
+            rows_loaded=rows_loaded
+        )
+        
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        # Clean up file if loading failed
+        if file_path.exists():
+            file_path.unlink()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        file.file.close()
+
+
+@router.get(
+    "/files",
+    summary="List uploaded CSV files",
+    description="Returns a list of CSV files in the data directory."
+)
+async def list_files() -> Dict[str, Any]:
+    """List all CSV files in the data directory."""
+    try:
+        files = []
+        for f in DATA_DIR.glob("*.csv"):
+            files.append({
+                "filename": f.name,
+                "size_bytes": f.stat().st_size,
+                "table_name": f.stem.lower().replace(" ", "_").replace("-", "_")
+            })
+        
+        return {
+            "files": files,
+            "count": len(files)
+        }
+    except Exception as e:
+        logger.error(f"Failed to list files: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete(
+    "/files/{filename}",
+    summary="Delete a CSV file",
+    description="Delete a CSV file from the data directory."
+)
+async def delete_file(filename: str) -> Dict[str, str]:
+    """Delete a CSV file."""
+    file_path = DATA_DIR / filename
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+    
+    if not filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Only CSV files can be deleted")
+    
+    try:
+        file_path.unlink()
+        logger.info(f"Deleted file: {filename}")
+        return {"message": f"Deleted {filename}"}
+    except Exception as e:
+        logger.error(f"Failed to delete file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get(
@@ -106,8 +233,8 @@ async def get_schema() -> SchemaResponse:
 @router.post(
     "/load",
     response_model=LoadResponse,
-    summary="Load CSV files into database",
-    description="Loads all CSV files from the data/ directory into PostgreSQL tables."
+    summary="Load all CSV files into database",
+    description="Loads all CSV files from the data/ directory into database tables."
 )
 async def load_csv_files() -> LoadResponse:
     """Load all CSVs from the data directory."""
