@@ -39,6 +39,7 @@ class Settings:
         log_level: Logging verbosity (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         database_url: PostgreSQL connection string
         groq_api_key: API key for Groq LLM service
+        google_api_key: API key for Google Gemini service
         llm_model: Model identifier for LLaMA
         llm_temperature: LLM creativity (0.0 = deterministic, 1.0 = creative)
         llm_max_tokens: Maximum response length
@@ -53,9 +54,21 @@ class Settings:
     
     # LLM settings
     groq_api_key: str
+    google_api_key: str
     llm_model: str
+    llm_model_fast: str
+    llm_model_smart: str
+    llm_model_analysis: str
     llm_temperature: float
     llm_max_tokens: int
+    
+    # Memory settings (Phase 6)
+    memory_persistent: bool
+    
+    # Safety settings (Phase 7)
+    rate_limit_per_minute: int
+    query_timeout_seconds: int
+    enable_audit_logging: bool
     
     def is_development(self) -> bool:
         """Check if running in development environment."""
@@ -123,7 +136,19 @@ def get_settings() -> Settings:
         
         # LLM
         groq_api_key=_get_env("GROQ_API_KEY"),
+        google_api_key=_get_env("GOOGLE_API_KEY"),
         llm_model=_get_env("LLM_MODEL", "llama-3.3-70b-versatile"),
+        llm_model_fast=_get_env("LLM_MODEL_FAST", "llama-3.1-8b-instant"),
+        llm_model_smart=_get_env("LLM_MODEL_SMART", "llama-3.3-70b-versatile"),
+        llm_model_analysis=_get_env("LLM_MODEL_ANALYSIS", "models/gemini-flash-latest"),
         llm_temperature=float(_get_env("LLM_TEMPERATURE", "0.1")),
         llm_max_tokens=int(_get_env("LLM_MAX_TOKENS", "2048")),
+        
+        # Memory (Phase 6)
+        memory_persistent=_get_env("MEMORY_PERSISTENT", "false").lower() == "true",
+        
+        # Safety (Phase 7)
+        rate_limit_per_minute=int(_get_env("RATE_LIMIT_PER_MINUTE", "30")),
+        query_timeout_seconds=int(_get_env("QUERY_TIMEOUT_SECONDS", "30")),
+        enable_audit_logging=_get_env("ENABLE_AUDIT_LOGGING", "true").lower() == "true",
     )

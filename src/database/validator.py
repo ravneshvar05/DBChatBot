@@ -161,21 +161,18 @@ class SQLValidator:
         Check if only allowed tables are used.
         Returns error message if invalid table found.
         """
-        # Simple regex to find table names after FROM and JOIN
-        # This is a basic implementation - could be improved with SQL parser
-        sql_upper = sql.upper()
-        
-        # Find tables after FROM
-        from_pattern = r'\bFROM\s+`?(\w+)`?'
-        join_pattern = r'\bJOIN\s+`?(\w+)`?'
+        # Regex to handle quoted (`table`) and unquoted (table) names
+        # Captures: 1=backticked, 2=double-quoted, 3=unquoted
+        table_pattern = r'\b(?:FROM|JOIN)\s+(?:`([^`]+)`|"([^"]+)"|([a-zA-Z0-9_]+))'
         
         tables_found = set()
         
-        for match in re.finditer(from_pattern, sql_upper):
-            tables_found.add(match.group(1).lower())
-        
-        for match in re.finditer(join_pattern, sql_upper):
-            tables_found.add(match.group(1).lower())
+        # Case-insensitive search on the original SQL to preserve case in quotes
+        # (though we lower() later, it's safer to parse original)
+        for match in re.finditer(table_pattern, sql, re.IGNORECASE):
+            name = match.group(1) or match.group(2) or match.group(3)
+            if name:
+                tables_found.add(name.lower())
         
         # Check against whitelist
         allowed_lower = {t.lower() for t in self.allowed_tables}

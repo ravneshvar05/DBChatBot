@@ -36,13 +36,17 @@ class ChatRequest(BaseModel):
         default="sql",
         description="Query mode: 'chat' for general conversation, 'sql' for database queries"
     )
+    include_analysis: bool = Field(
+        default=False,
+        description="If True, performs deep AI analysis on the results (slower). If False, uses fast rule-based summary."
+    )
 
 
 class ChatResponse(BaseModel):
     """
     Response model for the /chat endpoint.
     
-    Includes natural language answer and optionally the generated SQL.
+    Includes natural language answer, generated SQL, and analytics formatting.
     """
     message: str = Field(
         ...,
@@ -68,6 +72,29 @@ class ChatResponse(BaseModel):
     row_count: Optional[int] = Field(
         default=None,
         description="Number of rows returned"
+    )
+    # Analytics formatting fields (Phase 5)
+    formatted_data: Optional[str] = Field(
+        default=None,
+        description="Data formatted as markdown table or list"
+    )
+    insights: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Automatic statistics and insights from the data"
+    )
+    query_type: Optional[str] = Field(
+        default=None,
+        description="Detected query type (aggregation, ranking, comparison, etc.)"
+    )
+    
+    # Phase 9: Multi-Question Support
+    sql_queries: List[str] = Field(
+        default_factory=list,
+        description="List of SQL queries for multi-part questions"
+    )
+    formatted_data_list: List[str] = Field(
+        default_factory=list,
+        description="List of formatted data tables for multi-part questions"
     )
 
 

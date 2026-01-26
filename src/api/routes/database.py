@@ -13,6 +13,7 @@ from typing import Dict, List, Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from src.core.config import get_settings
 from src.core.logging_config import get_logger
@@ -124,7 +125,19 @@ async def upload_csv(
         # Load into database
         loader = CSVLoader()
         table_name = file_path.stem.lower().replace(" ", "_").replace("-", "_")
-        rows_loaded = loader.load_file(file_path, table_name, drop_existing=True)
+        
+        # Check if table already exists
+        inspector = SchemaInspector()
+        existing_tables = inspector.get_table_names()
+        
+        if table_name in existing_tables:
+            # Don't overwrite - return error
+            raise HTTPException(
+                status_code=409,  # Conflict
+                detail=f"Table '{table_name}' already exists. Delete it first or use a different filename."
+            )
+        
+        rows_loaded = loader.load_file(file_path, table_name, drop_existing=False)
         
         return UploadResponse(
             filename=safe_filename,
@@ -301,3 +314,60 @@ async def database_health() -> Dict[str, Any]:
         "healthy": is_healthy,
         "message": "Database connection OK" if is_healthy else "Database connection failed"
     }
+
+
+@router.delete(
+    "/tables/{table_name}",
+    summary="Delete a database table",
+    description="Drop a table from the database. Use with caution!"
+)
+async def delete_table(table_name: str) -> Dict[str, Any]:
+    """
+    Delete a table from the database.
+    
+    This permanently removes the table and all its data.
+    """
+    # Basic validation to prevent SQL injection
+    # Allow existing tables even with special chars, but block dangerous patterns
+    if not table_name or len(table_name) > 200 or '--' in table_name or ';' in table_name:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid table name"
+        )
+    
+    # Don't allow deleting system tables
+    protected_tables = {"conversation_sessions", "conversation_messages"}
+    if table_name.lower() in protected_tables:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot delete protected system table: {table_name}"
+        )
+    
+    try:
+        db = get_database()
+        inspector = SchemaInspector()
+        
+        # Check if table exists
+        if table_name not in inspector.get_table_names():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Table not found: {table_name}"
+            )
+        
+        # Drop the table
+        with db.get_session() as session:
+            session.execute(text(f"DROP TABLE IF EXISTS `{table_name}`"))
+            session.commit()
+        
+        logger.info(f"Deleted table: {table_name}")
+        
+        return {
+            "message": f"Successfully deleted table '{table_name}'",
+            "table_name": table_name
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete table: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

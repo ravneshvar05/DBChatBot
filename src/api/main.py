@@ -5,8 +5,8 @@ This module creates and configures the FastAPI application instance.
 It handles:
 1. Application initialization
 2. Router registration
-3. Middleware configuration
-4. Exception handlers
+3. Middleware configuration (including audit & security - Phase 7)
+4. Exception handlers (custom exceptions - Phase 7)
 5. Startup/shutdown events
 
 Run with: uvicorn src.api.main:app --reload
@@ -20,7 +20,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.config import get_settings
 from src.core.logging_config import setup_logging, get_logger
-from src.api.routes import chat_router, health_router, database_router
+from src.core.exceptions import (
+    ChatbotException,
+    RateLimitExceeded,
+    ValidationError,
+    DatabaseError,
+)
+from src.core.audit import AuditMiddleware, SecurityHeadersMiddleware
+from src.api.routes import chat_router, health_router, database_router, session_router
 from src.models.chat import ErrorResponse
 
 
@@ -42,6 +49,8 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info(f"Starting {settings.app_name} in {settings.app_env} mode")
     logger.info(f"LLM Model: {settings.llm_model}")
+    logger.info(f"Rate Limit: {settings.rate_limit_per_minute} req/min")
+    logger.info(f"Audit Logging: {settings.enable_audit_logging}")
     
     yield  # Application runs here
     
@@ -58,24 +67,37 @@ app = FastAPI(
     ## Features
     
     - **Natural Language Queries**: Ask questions in plain English
-    - **Safe SQL Generation**: Read-only queries with validation (Phase 3+)
-    - **Analytics Insights**: Human-readable summaries (Phase 5+)
-    - **Multi-turn Conversations**: Context-aware follow-ups (Phase 4+)
+    - **Safe SQL Generation**: Read-only queries with validation ✓
+    - **Multi-turn Conversations**: Context-aware follow-ups ✓
+    - **Persistent Memory**: Conversations survive restarts ✓
+    - **Analytics Insights**: Auto-generated statistics ✓
+    - **Rate Limiting**: Abuse prevention ✓
     
-    ## Current Phase
+    ## Current Phase: 7 - Safety & Reliability
     
-    **Phase 1**: Basic conversational chatbot without database access.
-    The assistant acknowledges queries and explains what analysis it would perform.
+    The assistant now includes rate limiting, input validation,
+    audit logging, and enhanced error handling.
     """,
-    version="0.1.0",
+    version="0.7.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
 
-# Configure CORS for development
-# In production, this should be restricted to specific origins
+# ============================================================
+# Middleware Configuration (Order matters!)
+# ============================================================
+
+# Security headers middleware (Phase 7)
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Audit logging middleware (Phase 7)
+if settings.enable_audit_logging:
+    app.add_middleware(AuditMiddleware)
+    logger.info("Audit logging middleware enabled")
+
+# CORS middleware
 if settings.is_development():
     app.add_middleware(
         CORSMiddleware,
@@ -87,13 +109,38 @@ if settings.is_development():
     logger.warning("CORS configured for development (all origins allowed)")
 
 
-# Register routers
-app.include_router(health_router)
-app.include_router(chat_router)
-app.include_router(database_router)
+# ============================================================
+# Exception Handlers
+# ============================================================
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    """Handle rate limit exceeded errors."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict(),
+        headers={"Retry-After": str(exc.retry_after)}
+    )
 
 
-# Global exception handler
+@app.exception_handler(ValidationError)
+async def validation_error_handler(request: Request, exc: ValidationError):
+    """Handle validation errors."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict()
+    )
+
+
+@app.exception_handler(ChatbotException)
+async def chatbot_exception_handler(request: Request, exc: ChatbotException):
+    """Handle all custom chatbot exceptions."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict()
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """
@@ -115,12 +162,26 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Root endpoint redirect to docs
+# ============================================================
+# Routers
+# ============================================================
+
+app.include_router(health_router)
+app.include_router(chat_router)
+app.include_router(database_router)
+app.include_router(session_router)
+
+
+# ============================================================
+# Root Endpoint
+# ============================================================
+
 @app.get("/", include_in_schema=False)
 async def root():
     """Redirect root to API documentation."""
     return {
         "message": "Data Analytics Assistant API",
+        "version": "0.7.0",
         "documentation": "/docs",
         "health": "/health"
     }

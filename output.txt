@@ -1,0 +1,20 @@
+D:\ChatBot\src\llm\client.py:16: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+Traceback (most recent call last):
+  File "D:\ChatBot\verify_keys.py", line 9, in <module>
+    from src.llm.client import LLMClient
+  File "D:\ChatBot\src\llm\__init__.py", line 10, in <module>
+    from src.llm.client import LLMClient, LLMError
+  File "D:\ChatBot\src\llm\client.py", line 18, in <module>
+    from groq import Groq, APIError, RateLimitError, APIConnectionError
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\site-packages\groq\__init__.py", line 3, in <module>
+    from . import types
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\site-packages\groq\types\__init__.py", line 5, in <module>
+    from .model import Model as Model

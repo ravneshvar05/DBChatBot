@@ -3,14 +3,16 @@ Chat Service - Business logic for conversational interactions.
 
 This service orchestrates the chat flow:
 1. Receives user message
-2. Calls LLM for response
-3. Returns formatted response
+2. Retrieves/creates session memory
+3. Calls LLM with conversation history
+4. Stores response in memory
+5. Returns formatted response
 
 Why a service layer:
 1. Separation of concerns - Routes stay thin
 2. Testability - Service can be tested without HTTP
 3. Reusability - Same logic can be used by different routes
-4. Future extensibility - Memory, validation, etc. added here
+4. Memory management - Session state is handled here
 """
 import uuid
 from datetime import datetime
@@ -19,35 +21,48 @@ from typing import Optional
 from src.core.logging_config import get_logger
 from src.llm.client import LLMClient, LLMError
 from src.models.chat import ChatRequest, ChatResponse
+from src.memory import get_memory_manager, MemoryManager
 
 logger = get_logger(__name__)
 
 
 class ChatService:
     """
-    Service for handling chat interactions.
+    Service for handling chat interactions with conversation memory.
     
-    This service manages the conversation flow between
-    users and the LLM. In Phase 1, it provides stateless
-    interactions without memory or database access.
+    This service manages the conversation flow between users and the LLM,
+    including multi-turn conversation support through session memory.
     
     Example:
         >>> service = ChatService()
         >>> response = service.process_message(
-        ...     ChatRequest(message="Hello!")
+        ...     ChatRequest(message="Hello!", session_id="abc-123")
         ... )
         >>> print(response.message)
         "Hello! How can I help you analyze your data today?"
+        >>> # Follow-up maintains context
+        >>> response2 = service.process_message(
+        ...     ChatRequest(message="What can you do?", session_id="abc-123")
+        ... )
     """
     
-    def __init__(self):
-        """Initialize the chat service with LLM client."""
+    def __init__(self, memory_manager: Optional[MemoryManager] = None):
+        """
+        Initialize the chat service.
+        
+        Args:
+            memory_manager: Optional MemoryManager instance.
+                          Uses global singleton if not provided.
+        """
         self.llm_client = LLMClient()
-        logger.info("ChatService initialized")
+        self.memory_manager = memory_manager or get_memory_manager()
+        logger.info("ChatService initialized with memory support")
     
     def process_message(self, request: ChatRequest) -> ChatResponse:
         """
         Process a user message and return an LLM response.
+        
+        Maintains conversation context through session memory.
         
         Args:
             request: The chat request containing user message
@@ -68,10 +83,23 @@ class ChatService:
         )
         
         try:
-            # Call LLM for response
+            # Get or create session memory
+            memory = self.memory_manager.get_or_create_session(session_id)
+            
+            # Get conversation history (before adding current message)
+            history = memory.get_history_for_llm()
+            
+            # Add user message to memory
+            memory.add_user_message(request.message)
+            
+            # Call LLM with conversation history
             llm_response = self.llm_client.generate(
-                user_message=request.message
+                user_message=request.message,
+                history=history if history else None
             )
+            
+            # Store assistant response in memory
+            memory.add_assistant_message(llm_response)
             
             response = ChatResponse(
                 message=llm_response,
@@ -81,7 +109,8 @@ class ChatService:
             
             logger.info(
                 f"Message processed: session={session_id}, "
-                f"response_length={len(llm_response)}"
+                f"response_length={len(llm_response)}, "
+                f"history_size={memory.message_count}"
             )
             
             return response
@@ -93,6 +122,30 @@ class ChatService:
         except Exception as e:
             logger.exception(f"Unexpected error in chat service: {e}")
             raise ChatServiceError("Failed to process message") from e
+    
+    def clear_session(self, session_id: str) -> bool:
+        """
+        Clear a session's conversation history.
+        
+        Args:
+            session_id: The session to clear
+            
+        Returns:
+            True if session was found and cleared
+        """
+        return self.memory_manager.clear_session_history(session_id)
+    
+    def get_session_info(self, session_id: str) -> Optional[dict]:
+        """
+        Get information about a session.
+        
+        Args:
+            session_id: The session to query
+            
+        Returns:
+            Session info dict or None if not found
+        """
+        return self.memory_manager.get_session_info(session_id)
     
     def _generate_session_id(self) -> str:
         """Generate a new unique session ID."""

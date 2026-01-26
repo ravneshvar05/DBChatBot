@@ -158,7 +158,7 @@ class SchemaInspector:
         lines = ["Database Schema:", "=" * 50]
         
         for table in tables:
-            lines.append(f"\nTable: {table.name} ({table.row_count} rows)")
+            lines.append(f"\nTable: `{table.name}` ({table.row_count} rows)")
             lines.append("-" * 40)
             
             for col in table.columns:
@@ -190,6 +190,66 @@ class SchemaInspector:
                 f"{col.name} ({col.type})"
                 for col in table.columns
             ])
-            lines.append(f"TABLE {table.name}: {cols}")
+            lines.append(f"TABLE `{table.name}`: {cols}")
+        
+        return "\n".join(lines)
+    
+    def get_column_sample_values(self, table_name: str, column_name: str, limit: int = 10) -> List[str]:
+        """
+        Get sample distinct values from a column (useful for categorical data).
+        
+        Args:
+            table_name: Name of the table
+            column_name: Name of the column
+            limit: Maximum number of sample values to return
+            
+        Returns:
+            List of sample distinct values
+        """
+        try:
+            with self.db.get_session() as session:
+                # Get distinct values, limit to avoid huge result sets
+                result = session.execute(
+                    text(f'SELECT DISTINCT `{column_name}` FROM `{table_name}` WHERE `{column_name}` IS NOT NULL LIMIT {limit}')
+                )
+                values = [str(row[0]) for row in result]
+                return values
+        except SQLAlchemyError as e:
+            logger.warning(f"Could not get sample values for {table_name}.{column_name}: {e}")
+            return []
+    
+    def get_enhanced_schema_for_prompt(self) -> str:
+        """
+        Generate an enhanced schema with sample values for text columns.
+        
+        This helps the LLM understand available categories and make better queries.
+        
+        Returns:
+            Enhanced schema string with sample values
+        """
+        tables = self.get_all_tables()
+        
+        if not tables:
+            return "No tables available."
+        
+        lines = []
+        for table in tables:
+            lines.append(f"\nTABLE: {table.name} ({table.row_count} rows)")
+            lines.append("Columns:")
+            
+            for col in table.columns:
+                col_desc = f"  - {col.name} ({col.type})"
+                
+                # For text columns, show sample values to help LLM understand categories
+                if 'TEXT' in str(col.type).upper() or 'VARCHAR' in str(col.type).upper() or 'CHAR' in str(col.type).upper():
+                    samples = self.get_column_sample_values(table.name, col.name, limit=8)
+                    if samples:
+                        # Show up to 8 sample values
+                        sample_str = ", ".join(f"'{s}'" for s in samples[:8])
+                        if len(samples) > 8:
+                            sample_str += "..."
+                        col_desc += f" [examples: {sample_str}]"
+                
+                lines.append(col_desc)
         
         return "\n".join(lines)

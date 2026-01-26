@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Analytics Assistant</title>
+    <meta name="description" content="AI-powered data analytics chatbot with natural language SQL queries">
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">📊</span>
+                    <h1>Data Analytics</h1>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>Conversation</h3>
+                <button id="newChatBtn" class="sidebar-btn primary">
+                    <span class="btn-icon">➕</span>
+                    New Chat
+                </button>
+                <button id="clearHistoryBtn" class="sidebar-btn">
+                    <span class="btn-icon">🗑️</span>
+                    Clear History
+                </button>
+                <button id="clearAllBtn" class="sidebar-btn danger">
+                    <span class="btn-icon">⚠️</span>
+                    Clear All Data
+                </button>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>Data Management</h3>
+                <button id="uploadCsvBtn" class="sidebar-btn">
+                    <span class="btn-icon">📤</span>
+                    Upload CSV
+                </button>
+                <input type="file" id="csvFileInput" accept=".csv" hidden>
+                <button id="manageTablesBtn" class="sidebar-btn">
+                    <span class="btn-icon">📋</span>
+                    Manage Tables
+                </button>
+            </div>
+            
+            <div class="sidebar-section session-info">
+                <h3>Session Info</h3>
+                <div id="sessionInfo">
+                    <p class="info-item">
+                        <span class="label">ID:</span>
+                        <span id="sessionIdDisplay" class="value">-</span>
+                    </p>
+                    <p class="info-item">
+                        <span class="label">Messages:</span>
+                        <span id="messageCountDisplay" class="value">0</span>
+                    </p>
+                    <p class="info-item">
+                        <span class="label">Storage:</span>
+                        <span id="storageTypeDisplay" class="value">-</span>
+                    </p>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Chat Area -->
+        <main class="chat-area">
+            <div class="chat-header">
+                <h2>Ask about your data</h2>
+                <p>Type natural language questions and get SQL-powered answers</p>
+            </div>
+            
+            <div class="chat-messages" id="chatMessages">
+                <!-- Welcome message -->
+                <div class="message assistant">
+                    <div class="message-content">
+                        <p>👋 Welcome to Data Analytics Assistant!</p>
+                        <p>I can help you analyze your data using natural language. Try asking:</p>
+                        <ul>
+                            <li>"What are the top 5 highest rated movies?"</li>
+                            <li>"How many records are in the database?"</li>
+                            <li>"Show me the average rating by year"</li>
+                        </ul>
+                        <p>Upload a CSV file using the sidebar to get started!</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-input-container">
+                <form id="chatForm" class="chat-form">
+                    <textarea 
+                        id="messageInput" 
+                        placeholder="Ask a question about your data..."
+                        rows="1"
+                        autofocus
+                    ></textarea>
+                    <button type="submit" id="sendBtn" class="send-btn">
+                        <span class="send-icon">➤</span>
+                    </button>
+                </form>
+                <p class="input-hint">Press Enter to send, Shift+Enter for new line</p>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Modal for Table Management -->
+    <div class="modal" id="tablesModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Manage Tables</h2>
+                <button class="modal-close" id="closeTablesModal">&times;</button>
+            </div>
+            <div class="modal-body" id="tablesListContainer">
+                <p class="loading">Loading tables...</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Confirmation Modal -->
+    <div class="modal" id="confirmModal">
+        <div class="modal-content confirm-modal">
+            <div class="modal-header">
+                <h2 id="confirmTitle">Confirm Action</h2>
+            </div>
+            <div class="modal-body">
+                <p id="confirmMessage">Are you sure you want to proceed?</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" id="confirmCancel">Cancel</button>
+                <button class="btn-danger" id="confirmOk">Confirm</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Toast notifications -->
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <script src="js/api.js"></script>
+    <script src="js/session.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

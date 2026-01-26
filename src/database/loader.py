@@ -7,13 +7,15 @@ Key optimizations:
 3. Bulk INSERT with executemany
 4. Progress logging every batch
 5. Schema inference from first N rows only
+6. UTF-8 BOM handling
 """
 import csv
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Iterator
 from io import StringIO
+import re
 
-from sqlalchemy import text, Table, Column, MetaData, String, Integer, Float, Boolean
+from sqlalchemy import text, Text, Table, Column, MetaData, String, Integer, Float, Boolean
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.connection import get_database
@@ -68,7 +70,17 @@ class CSVLoader:
             raise FileNotFoundError(f"CSV file not found: {file_path}")
         
         if table_name is None:
-            table_name = file_path.stem.lower().replace(" ", "_").replace("-", "_")
+            # Sanitize table name: remove special chars, keep only alphanumeric and underscores
+            raw_name = file_path.stem.lower()
+            # Remove everything in parentheses, brackets, etc.
+            raw_name = re.sub(r'[\(\)\[\]\{\}]', '', raw_name)
+            # Replace spaces, hyphens with underscores
+            raw_name = raw_name.replace(" ", "_").replace("-", "_")
+            # Remove any remaining special characters
+            table_name = re.sub(r'[^a-z0-9_]', '', raw_name)
+            # Ensure it doesn't start with a number
+            if table_name and table_name[0].isdigit():
+                table_name = 't_' + table_name
         
         logger.info(f"Loading CSV: {file_path.name} -> table '{table_name}'")
         
@@ -124,12 +136,13 @@ class CSVLoader:
         # Get file size for estimation
         file_size = file_path.stat().st_size
         
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+        # Use utf-8-sig to handle BOM automatically
+        with open(file_path, 'r', encoding='utf-8-sig', errors='replace') as f:
             reader = csv.DictReader(f)
             raw_headers = reader.fieldnames or []
             
-            # Filter empty headers
-            headers = [h for h in raw_headers if h and h.strip()]
+            # Filter empty headers and strip BOM/whitespace
+            headers = [h.strip().lstrip('\ufeff') for h in raw_headers if h and h.strip()]
             
             # Read sample rows
             sample_rows = []
@@ -215,7 +228,8 @@ class CSVLoader:
                     safe_name = f"col_{len(columns)}"
                 
                 if col_type == String:
-                    columns.append(Column(safe_name, String(2000)))
+                    # Use Text instead of String(2000) to avoid MySQL row size limits
+                    columns.append(Column(safe_name, Text))
                 else:
                     columns.append(Column(safe_name, col_type))
             
@@ -254,7 +268,8 @@ class CSVLoader:
         row_count = 0
         batch = []
         
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+        # Use utf-8-sig to handle BOM automatically
+        with open(file_path, 'r', encoding='utf-8-sig', errors='replace') as f:
             reader = csv.DictReader(f)
             
             for row in reader:
