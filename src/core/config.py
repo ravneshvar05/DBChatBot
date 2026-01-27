@@ -120,8 +120,26 @@ def get_settings() -> Settings:
         ValueError: If required environment variables are missing
     """
     # Get database URL and fix dialect if needed
-    # Some providers use postgres:// but SQLAlchemy requires postgresql://
-    database_url = _get_env("DATABASE_URL")
+    # Priority:
+    # 1. DATABASE_URL (Cloud/Aiven)
+    # 2. Local Components (DB_HOST, DB_USER, etc)
+    database_url = os.environ.get("DATABASE_URL")
+    
+    if not database_url:
+        # Fallback to constructing from components (Local MySQL)
+        try:
+            host = _get_env("DB_HOST", "localhost")
+            port = _get_env("DB_PORT", "3306")
+            user = _get_env("DB_USER", "root")
+            password = _get_env("DB_PASSWORD", "")
+            name = _get_env("DB_NAME", "footwear_db")
+            
+            # Construct MySQL URL
+            database_url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}"
+        except ValueError:
+             # If components are also missing, raise error
+             raise ValueError("Missing database configuration. Set DATABASE_URL or (DB_HOST, DB_USER, ...)")
+
     if database_url.startswith("postgres://"):
         database_url = database_url.replace("postgres://", "postgresql://", 1)
     

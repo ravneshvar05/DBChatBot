@@ -297,7 +297,7 @@ async def get_session_history(session_id: str):
         )
     
     # Get full message details
-    messages = [msg.to_full_dict() for msg in session.get_history()]
+    messages = session.get_all_messages()
     
     return SessionHistoryResponse(
         session_id=session_id,

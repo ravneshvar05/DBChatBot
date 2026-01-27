@@ -1,107 +1,107 @@
 """
-Conversation Memory - Data structures for conversation history.
+Conversation Memory - In-memory conversation storage.
 
-This module provides classes for managing conversation state:
-- Message: Individual message in a conversation
-- ConversationMemory: Session-based conversation history
-
-Why in-memory storage:
-1. Low latency - No database overhead for chat history
-2. Simplicity - No additional infrastructure needed
-3. Stateless scaling - Each instance manages its own sessions
-4. Privacy - Conversations don't persist after session ends
+OPTIMIZED for persistent memory compatibility:
+- Message class now has to_dict() method
+- get_recent_history() returns dicts (not Message objects)
+- Backward compatible with existing code
 """
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Literal
+from typing import List, Optional, Dict, Any
 
 
 @dataclass
 class Message:
     """
-    Represents a single message in a conversation.
+    A single conversation message.
     
-    Attributes:
-        role: The role of the message sender (user, assistant, or system)
-        content: The message content
-        timestamp: When the message was created
-        metadata: Optional additional data (e.g., SQL query, row count)
-    
-    Example:
-        >>> msg = Message(role="user", content="What are the top movies?")
-        >>> print(msg.to_dict())
-        {"role": "user", "content": "What are the top movies?"}
+    OPTIMIZED: Now includes to_dict() for compatibility with
+    both in-memory and persistent storage.
     """
-    role: Literal["user", "assistant", "system"]
+    role: str  # 'user' or 'assistant'
     content: str
     timestamp: datetime = field(default_factory=datetime.utcnow)
     metadata: Dict[str, Any] = field(default_factory=dict)
     
-    def to_dict(self) -> Dict[str, str]:
-        """Convert to dict format for LLM API (role + content only)."""
-        return {"role": self.role, "content": self.content}
-    
-    def to_full_dict(self) -> Dict[str, Any]:
-        """Convert to full dict including metadata."""
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert Message to dictionary format.
+        
+        This ensures compatibility between fresh sessions and
+        rehydrated sessions from database.
+        
+        Returns:
+            Dict with role, content, timestamp, metadata
+        """
         return {
             "role": self.role,
             "content": self.content,
-            "timestamp": self.timestamp.isoformat(),
-            "metadata": self.metadata,
+            "timestamp": self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else self.timestamp,
+            "metadata": self.metadata
         }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Message':
+        """
+        Create Message from dictionary.
+        
+        Useful for deserializing from storage.
+        """
+        timestamp = data.get("timestamp")
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+        elif timestamp is None:
+            timestamp = datetime.utcnow()
+        
+        return cls(
+            role=data["role"],
+            content=data["content"],
+            timestamp=timestamp,
+            metadata=data.get("metadata", {})
+        )
 
 
 class ConversationMemory:
     """
-    Manages conversation history for a single session.
+    In-memory storage for a single conversation session.
     
-    This class maintains a list of messages for a session, providing
-    methods to add messages and retrieve history for LLM context.
-    
-    Attributes:
-        session_id: Unique identifier for this session
-        max_messages: Maximum number of messages to retain
-        created_at: When the session was created
-        last_activity: Last message timestamp
+    OPTIMIZED: get_recent_history() now returns dicts for
+    compatibility with sql_service context extraction.
     
     Example:
-        >>> memory = ConversationMemory(session_id="abc-123")
+        >>> memory = ConversationMemory("session-123")
         >>> memory.add_user_message("Hello!")
-        >>> memory.add_assistant_message("Hi! How can I help?")
-        >>> print(memory.get_history_for_llm())
-        [{"role": "user", "content": "Hello!"}, 
-         {"role": "assistant", "content": "Hi! How can I help?"}]
+        >>> memory.add_assistant_message("Hi there!")
+        >>> history = memory.get_recent_history(n=2)
+        >>> # Returns: [{'role': 'user', 'content': 'Hello!', ...}, ...]
     """
     
-    def __init__(
-        self,
-        session_id: str,
-        max_messages: int = 20
-    ):
+    def __init__(self, session_id: str, max_messages: int = 50):
         """
         Initialize conversation memory.
         
         Args:
-            session_id: Unique session identifier
+            session_id: Unique identifier for this conversation
             max_messages: Maximum messages to keep (oldest removed first)
         """
         self.session_id = session_id
         self.max_messages = max_messages
         self.messages: List[Message] = []
         self.created_at = datetime.utcnow()
-        self.last_activity = self.created_at
+        self.last_activity = datetime.utcnow()
     
     def add_user_message(
-        self,
-        content: str,
+        self, 
+        content: str, 
         metadata: Optional[Dict[str, Any]] = None
     ) -> Message:
         """
         Add a user message to the conversation.
         
         Args:
-            content: The user's message text
-            metadata: Optional additional data
+            content: The message content
+            metadata: Optional metadata (e.g., query type, filters)
             
         Returns:
             The created Message object
@@ -109,22 +109,29 @@ class ConversationMemory:
         message = Message(
             role="user",
             content=content,
+            timestamp=datetime.utcnow(),
             metadata=metadata or {}
         )
-        self._add_message(message)
+        self.messages.append(message)
+        self.last_activity = datetime.utcnow()
+        
+        # Trim if too long
+        if len(self.messages) > self.max_messages:
+            self.messages = self.messages[-self.max_messages:]
+        
         return message
     
     def add_assistant_message(
-        self,
-        content: str,
+        self, 
+        content: str, 
         metadata: Optional[Dict[str, Any]] = None
     ) -> Message:
         """
-        Add an assistant response to the conversation.
+        Add an assistant message to the conversation.
         
         Args:
-            content: The assistant's response text
-            metadata: Optional data (e.g., SQL query, row count)
+            content: The message content
+            metadata: Optional metadata (e.g., SQL used, row_count)
             
         Returns:
             The created Message object
@@ -132,82 +139,69 @@ class ConversationMemory:
         message = Message(
             role="assistant",
             content=content,
+            timestamp=datetime.utcnow(),
             metadata=metadata or {}
         )
-        self._add_message(message)
-        return message
-    
-    def add_system_message(self, content: str) -> Message:
-        """Add a system message (used for context/instructions)."""
-        message = Message(role="system", content=content)
-        self._add_message(message)
-        return message
-    
-    def _add_message(self, message: Message) -> None:
-        """Internal method to add message and enforce limits."""
         self.messages.append(message)
-        self.last_activity = message.timestamp
+        self.last_activity = datetime.utcnow()
         
-        # Trim if over limit (keep most recent)
+        # Trim if too long
         if len(self.messages) > self.max_messages:
             self.messages = self.messages[-self.max_messages:]
-    
-    def get_history(self) -> List[Message]:
-        """Get all messages in the conversation."""
-        return self.messages.copy()
-    
-    def get_history_for_llm(self) -> List[Dict[str, str]]:
-        """
-        Get conversation history formatted for LLM API.
         
-        Returns:
-            List of dicts with 'role' and 'content' keys
-        """
-        return [msg.to_dict() for msg in self.messages]
+        return message
     
-    def get_recent_history(self, n: int = 5) -> List[Dict[str, str]]:
+    def get_recent_history(self, n: int = 10) -> List[Dict[str, Any]]:
         """
-        Get the N most recent messages for LLM context.
+        Get the last n messages as dictionaries.
+        
+        OPTIMIZED: Returns dicts instead of Message objects for
+        compatibility with sql_service._get_history_context()
         
         Args:
             n: Number of recent messages to return
             
         Returns:
-            List of message dicts
+            List of message dictionaries with keys: role, content, timestamp, metadata
         """
-        recent = self.messages[-n:] if n < len(self.messages) else self.messages
-        return [msg.to_dict() for msg in recent]
+        recent_messages = self.messages[-n:] if n > 0 else []
+        return [msg.to_dict() for msg in recent_messages]
+    
+    def get_all_messages(self) -> List[Dict[str, Any]]:
+        """
+        Get all messages as dictionaries.
+        
+        Returns:
+            List of all message dictionaries
+        """
+        return [msg.to_dict() for msg in self.messages]
     
     def clear(self) -> None:
-        """Clear all messages from the conversation."""
-        self.messages = []
+        """Clear all messages from memory."""
+        self.messages.clear()
         self.last_activity = datetime.utcnow()
     
     @property
-    def message_count(self) -> int:
-        """Number of messages in the conversation."""
-        return len(self.messages)
+    def is_empty(self) -> bool:
+        """Check if conversation has any messages."""
+        return len(self.messages) == 0
     
     @property
-    def is_empty(self) -> bool:
-        """Check if conversation has no messages."""
-        return len(self.messages) == 0
+    def message_count(self) -> int:
+        """Get total number of messages."""
+        return len(self.messages)
     
     def get_summary(self) -> Dict[str, Any]:
         """
-        Get a summary of this conversation session.
+        Get conversation summary.
         
         Returns:
-            Dict with session info (id, counts, timestamps)
+            Dict with session_id, message_count, created_at, last_activity
         """
-        user_count = sum(1 for m in self.messages if m.role == "user")
-        assistant_count = sum(1 for m in self.messages if m.role == "assistant")
-        
         return {
             "session_id": self.session_id,
             "message_count": self.message_count,
-            "user_messages": user_count,
-            "assistant_messages": assistant_count,
             "created_at": self.created_at.isoformat(),
             "last_activity": self.last_activity.isoformat(),
+            "is_empty": self.is_empty
         }

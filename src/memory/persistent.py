@@ -1,6 +1,12 @@
 """
 Persistent Memory Manager - Database-backed conversation storage.
 
+OPTIMIZED for context-aware SQL generation:
+1. Proper metadata serialization (SQL queries preserved)
+2. Better message rehydration from DB
+3. Debug logging for troubleshooting
+4. Ensures Message.to_dict() compatibility
+
 This module provides a MySQL-backed implementation of the MemoryManager
 interface. It uses write-through caching for performance:
 - Reads: Check in-memory cache first, then DB
@@ -11,6 +17,7 @@ This enables Long-Term Memory (LTM) that survives server restarts.
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 import threading
+import json
 
 from sqlalchemy.orm import Session
 
@@ -26,6 +33,8 @@ class PersistentMemoryManager:
     """
     Database-backed memory manager with in-memory caching.
     
+    OPTIMIZED: Better metadata handling for SQL context preservation.
+    
     Provides the same interface as MemoryManager but persists
     conversations to MySQL for long-term storage.
     
@@ -33,8 +42,8 @@ class PersistentMemoryManager:
         >>> manager = PersistentMemoryManager()
         >>> session = manager.get_or_create_session("user-123")
         >>> session.add_user_message("Hello!")
-        >>> # Message is now saved to database
-        >>> # Server can restart and session will be restored
+        >>> # Message is now saved to database with metadata
+        >>> # Server can restart and session will be restored with full context
     """
     
     def __init__(
@@ -77,7 +86,7 @@ class PersistentMemoryManager:
         with self._lock:
             # Check cache first
             if session_id in self._cache:
-                logger.debug(f"Session cache hit: {session_id}")
+                logger.debug(f"[PERSISTENT] Session cache hit: {session_id}")
                 return self._cache[session_id]
             
             # Try to load from database
@@ -90,13 +99,16 @@ class PersistentMemoryManager:
                     # Load existing session from DB
                     memory = self._load_from_db(db_conv, db_session)
                     self._cache[session_id] = memory
-                    logger.info(f"Loaded session from DB: {session_id}")
+                    logger.info(
+                        f"[PERSISTENT] Loaded session from DB: {session_id} "
+                        f"({memory.message_count} messages)"
+                    )
                     return memory
                 
                 # Create new session
                 memory = self._create_new_session(session_id, db_session)
                 self._cache[session_id] = memory
-                logger.info(f"Created new persistent session: {session_id}")
+                logger.info(f"[PERSISTENT] Created new persistent session: {session_id}")
                 return memory
     
     def get_session(self, session_id: str) -> Optional[ConversationMemory]:
@@ -137,20 +149,25 @@ class PersistentMemoryManager:
         """
         Save a message to the database.
         
+        OPTIMIZED: Better metadata serialization for SQL preservation.
+        
         Args:
             session_id: Session to add message to
             role: 'user' or 'assistant'
             content: Message content
-            metadata: Optional metadata dict
+            metadata: Optional metadata dict (includes SQL, row_count, etc.)
         """
         with self.db.get_session() as db_session:
+            # Ensure metadata is JSON-serializable
+            safe_metadata = self._serialize_metadata(metadata)
+            
             # Create message record
             db_message = ConversationMessage(
                 session_id=session_id,
                 role=role,
                 content=content,
                 timestamp=datetime.utcnow(),
-                extra_data=metadata  # Stored as extra_data in DB
+                extra_data=safe_metadata  # Stored as extra_data in DB
             )
             db_session.add(db_message)
             
@@ -164,7 +181,15 @@ class PersistentMemoryManager:
                 db_conv.last_activity = datetime.utcnow()
             
             db_session.commit()
-            logger.debug(f"Saved message to DB: session={session_id}, role={role}")
+            
+            # Debug: Log SQL if present
+            if safe_metadata and safe_metadata.get('sql'):
+                logger.debug(
+                    f"[PERSISTENT] Saved message with SQL: session={session_id}, "
+                    f"sql={safe_metadata['sql'][:50]}..."
+                )
+            else:
+                logger.debug(f"[PERSISTENT] Saved message: session={session_id}, role={role}")
     
     def clear_session(self, session_id: str) -> bool:
         """
@@ -190,7 +215,7 @@ class PersistentMemoryManager:
                 if db_conv:
                     db_session.delete(db_conv)
                     db_session.commit()
-                    logger.info(f"Deleted session from DB: {session_id}")
+                    logger.info(f"[PERSISTENT] Deleted session from DB: {session_id}")
                     return True
                 
                 return False
@@ -226,7 +251,7 @@ class PersistentMemoryManager:
                     db_conv.message_count = 0
                     db_conv.last_activity = datetime.utcnow()
                     db_session.commit()
-                    logger.info(f"Cleared history for session: {session_id}")
+                    logger.info(f"[PERSISTENT] Cleared history for session: {session_id}")
                     return True
                 
                 return False
@@ -310,12 +335,72 @@ class PersistentMemoryManager:
                 "storage": "persistent"
             }
     
+    # ==================== OPTIMIZED HELPER METHODS ====================
+    
+    def _serialize_metadata(self, metadata: Optional[Dict]) -> Optional[Dict]:
+        """
+        Ensure metadata is JSON-serializable.
+        
+        Handles datetime objects and other non-serializable types.
+        """
+        if not metadata:
+            return None
+        
+        try:
+            # Test if it's already serializable
+            json.dumps(metadata)
+            return metadata
+        except (TypeError, ValueError):
+            # Convert non-serializable types
+            safe_metadata = {}
+            for key, value in metadata.items():
+                if isinstance(value, datetime):
+                    safe_metadata[key] = value.isoformat()
+                elif isinstance(value, (str, int, float, bool, type(None))):
+                    safe_metadata[key] = value
+                elif isinstance(value, (list, dict)):
+                    try:
+                        json.dumps(value)
+                        safe_metadata[key] = value
+                    except:
+                        safe_metadata[key] = str(value)
+                else:
+                    safe_metadata[key] = str(value)
+            
+            return safe_metadata
+    
+    def _deserialize_metadata(self, metadata: Optional[Dict]) -> Dict:
+        """
+        Deserialize metadata from DB, handling any format issues.
+        
+        OPTIMIZED: Ensures metadata is always a dict, never None.
+        """
+        if not metadata:
+            return {}
+        
+        if isinstance(metadata, dict):
+            return metadata
+        
+        # Fallback: try to parse as JSON string
+        if isinstance(metadata, str):
+            try:
+                return json.loads(metadata)
+            except:
+                logger.warning(f"[PERSISTENT] Failed to parse metadata: {metadata[:100]}")
+                return {}
+        
+        return {}
+    
     def _load_from_db(
         self,
         db_conv: ConversationSession,
         db_session: Session
     ) -> ConversationMemory:
-        """Load a ConversationMemory from database records."""
+        """
+        Load a ConversationMemory from database records.
+        
+        OPTIMIZED: Better metadata handling and debug logging.
+        """
         memory = PersistentConversationMemory(
             session_id=db_conv.id,
             manager=self,
@@ -329,14 +414,29 @@ class PersistentMemoryManager:
             ConversationMessage.session_id == db_conv.id
         ).order_by(ConversationMessage.timestamp).all()
         
+        logger.debug(f"[PERSISTENT] Loading {len(messages)} messages from DB")
+        
+        sql_count = 0
         for msg in messages:
+            # Deserialize metadata safely
+            metadata = self._deserialize_metadata(msg.extra_data)
+            
+            # Debug: Count messages with SQL
+            if metadata.get('sql'):
+                sql_count += 1
+            
             message = Message(
                 role=msg.role,
                 content=msg.content,
                 timestamp=msg.timestamp,
-                metadata=msg.extra_data or {}
+                metadata=metadata
             )
             memory.messages.append(message)
+        
+        logger.debug(
+            f"[PERSISTENT] Loaded session: {db_conv.id}, "
+            f"{len(messages)} messages ({sql_count} with SQL context)"
+        )
         
         return memory
     
@@ -357,7 +457,6 @@ class PersistentMemoryManager:
         db_session.commit()
         
         # Create memory object
-        # Create memory object
         memory = PersistentConversationMemory(
             session_id=session_id,
             manager=self,
@@ -370,6 +469,8 @@ class PersistentMemoryManager:
 class PersistentConversationMemory(ConversationMemory):
     """
     ConversationMemory that auto-saves to database.
+    
+    OPTIMIZED: Ensures metadata (including SQL) is properly persisted.
     
     Extends ConversationMemory to add write-through persistence.
     """
@@ -384,7 +485,16 @@ class PersistentConversationMemory(ConversationMemory):
         self._manager = manager
     
     def add_user_message(self, content: str, metadata: Optional[Dict] = None) -> Message:
-        """Add user message and save to database."""
+        """
+        Add user message and save to database.
+        
+        Args:
+            content: Message content
+            metadata: Optional metadata (e.g., query type)
+        
+        Returns:
+            Created Message object
+        """
         message = super().add_user_message(content, metadata)
         self._manager.save_message(
             self.session_id, "user", content, metadata
@@ -392,8 +502,27 @@ class PersistentConversationMemory(ConversationMemory):
         return message
     
     def add_assistant_message(self, content: str, metadata: Optional[Dict] = None) -> Message:
-        """Add assistant message and save to database."""
+        """
+        Add assistant message and save to database.
+        
+        CRITICAL: This is where SQL context is saved!
+        
+        Args:
+            content: Message content
+            metadata: Optional metadata (MUST include 'sql' key for context)
+        
+        Returns:
+            Created Message object
+        """
         message = super().add_assistant_message(content, metadata)
+        
+        # Debug: Log when SQL is being saved
+        if metadata and metadata.get('sql'):
+            logger.debug(
+                f"[PERSISTENT] Saving assistant message with SQL: "
+                f"{metadata['sql'][:50]}..."
+            )
+        
         self._manager.save_message(
             self.session_id, "assistant", content, metadata
         )

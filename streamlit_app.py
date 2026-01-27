@@ -15,7 +15,8 @@ from datetime import datetime
 # Configuration
 # ============================================================
 
-API_BASE_URL = "http://127.0.0.1:8000"
+import os
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 st.set_page_config(
     page_title="Data Analytics Assistant",
@@ -30,126 +31,119 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* "Midnight Gold" Premium Theme */
+    /* "Soft Paper" Warm Theme */
     
-    /* Global Fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Playfair+Display:wght@600&display=swap');
+    /* Global Fonts & Colors */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@600&display=swap');
     
-    html, body, [class*="css"] {
+    /* Soft Text (Dark Slate/Brown-Grey) - Readable but not harsh black */
+    html, body, [class*="css"], .stMarkdown, .stText, p {
         font-family: 'Inter', sans-serif;
-        color: #e2e8f0;
+        color: #334155 !important; /* Slate 700 */
     }
     
-    /* Headers - Serif for Classy look */
-    h1, h2, h3 {
+    /* App Background - Warm Cream */
+    .stApp {
+        background-color: #fdfbf7;
+    }
+    
+    /* Headers */
+    h1, h2, h3, h4, h5, h6 {
         font-family: 'Playfair Display', serif;
-        font-weight: 600;
-        color: #f8fafc;
-        letter-spacing: 0.5px;
+        font-weight: 700;
+        color: #1e293b !important; /* Slate 800 */
+        letter-spacing: -0.5px;
     }
     
     /* Main container */
     .main .block-container {
-        padding-top: 2.5rem;
+        padding-top: 2rem;
         padding-bottom: 3rem;
         max-width: 1000px;
     }
     
-    /* Metric Cards - Glassmorphism */
+    /* Metric Cards - Warm White */
     div[data-testid="stMetric"] {
-        background-color: rgba(30, 41, 59, 0.4);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
+        background-color: #ffffff;
+        border: 1px solid #e5e7eb; /* Soft Grey */
         padding: 1.2rem;
         border-radius: 12px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02); /* Very subtle shadow */
     }
     div[data-testid="stMetricValue"] {
-        color: #fbbf24; /* Amber-400 Gold */
+        color: #d97706 !important; /* Amber 600 - Warm Gold */
         font-family: 'Playfair Display', serif;
+        font-weight: 700;
     }
     div[data-testid="stMetricLabel"] {
-        color: #94a3b8;
-        font-size: 0.9rem;
+        color: #64748b !important; /* Slate 500 */
+        font-weight: 600;
+        font-size: 1rem;
     }
     
     /* Chat Messages */
     .stChatMessage {
-        background-color: transparent;
-        padding: 1.5rem 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        background-color: #ffffff;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        border-radius: 12px;
+        border: 1px solid #f3f4f6; /* Very light border */
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
     }
     .stChatMessage[data-testid="stChatMessageAvatarUser"] {
-        background-color: #4f46e5; /* Indigo */
+        background-color: #d97706; /* Amber */
+        color: white;
     }
     .stChatMessage[data-testid="stChatMessageAvatarAssistant"] {
-        background-color: #0f172a;
-        border: 1px solid #334155;
+        background-color: #fdfbf7; /* Matches bg */
+        border: 1px solid #e5e7eb;
+        color: #334155;
     }
     
     /* Sidebar */
     [data-testid="stSidebar"] {
-        background-color: #020617; /* Slate 950 */
-        border-right: 1px solid #1e293b;
+        background-color: #f9f8f4; /* Slightly darker cream */
+        border-right: 1px solid #e5e7eb;
     }
     
     /* Tabs */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 2rem;
+        gap: 1.5rem;
         background-color: transparent;
-        border-bottom: 1px solid #1e293b;
+        border-bottom: 2px solid #e5e7eb;
     }
     .stTabs [data-baseweb="tab"] {
-        height: 45px;
+        height: 50px;
         background-color: transparent;
         border: none;
-        color: #64748b;
-        font-weight: 500;
-        padding: 0 1rem;
-    }
-    .stTabs [data-baseweb="tab"]:hover {
-        color: #e2e8f0;
+        color: #94a3b8;
+        font-weight: 600;
+        font-size: 1rem;
     }
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background-color: transparent;
-        color: #fbbf24; /* Gold */
-        border-bottom: 2px solid #fbbf24;
+        color: #d97706 !important; /* Amber */
+        border-bottom: 3px solid #d97706;
     }
     
     /* Buttons */
     .stButton > button {
-        border-radius: 6px;
-        font-weight: 500;
-        border: 1px solid #334155;
-        background-color: #1e293b;
-        color: #e2e8f0;
-        transition: all 0.2s;
+        border-radius: 8px;
+        font-weight: 600;
+        border: 1px solid #e5e7eb;
+        background-color: #ffffff;
+        color: #334155;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
     }
     .stButton > button:hover {
-        border-color: #fbbf24;
-        color: #fbbf24;
+        border-color: #d97706;
+        color: #d97706;
+        background-color: #fffbeb; /* Amber 50 */
     }
     
-    /* SQL & Code */
+    /* SQL Code Blocks */
     .stCode {
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    
-    /* Dataframes */
-    [data-testid="stDataFrame"] {
-        border: 1px solid #1e293b;
-        border-radius: 8px;
-    }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        background-color: transparent;
-        color: #e2e8f0;
-        border-radius: 8px;
-    }
-    .streamlit-expanderHeader:hover {
-        color: #fbbf24;
+        border: 1px solid #e5e7eb;
+        background-color: #f9f8f4;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -205,13 +199,25 @@ def load_session(session_id: str):
             
             # Convert backend messages to frontend format
             for msg in data.get("messages", []):
-                st.session_state.messages.append({
+                frontend_msg = {
                     "role": msg["role"],
                     "content": msg["content"]
-                })
+                }
+                
+                # Unpack metadata fields that the UI expects at the top level
+                meta = msg.get("metadata", {})
+                if meta:
+                    for key in ["sql", "sql_queries", "data", "formatted_data_list", "row_count", "insights"]:
+                        if key in meta:
+                            frontend_msg[key] = meta[key]
+                            
+                st.session_state.messages.append(frontend_msg)
             return True
-        return False
-    except:
+        else:
+             st.toast(f"Failed to load history: {response.status_code}")
+             return False
+    except Exception as e:
+        st.error(f"Error loading session: {e}")
         return False
 
 
@@ -230,7 +236,7 @@ def send_message(message: str, include_analysis: bool = False) -> dict:
                 "mode": "sql",
                 "include_analysis": include_analysis
             },
-            timeout=60
+            timeout=120
         )
         if response.status_code == 200:
             return response.json()
@@ -462,12 +468,28 @@ def render_chat():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             
-            # 2. Metric Cards (if simple aggregation) to history
-            if msg.get("row_count") == 1 and msg.get("data"):
-                row = msg["data"][0]
-                num_keys = [k for k, v in row.items() if isinstance(v, (int, float))]
-                if len(num_keys) == 1:
-                    st.metric(label=num_keys[0].replace("_", " ").title(), value=row[num_keys[0]])
+            # 2. Hero Metrics (Premium Display in History)
+            if msg.get("insights") and msg["insights"].get("top_values"):
+                # Try to extract key metrics from insights
+                stats = msg["insights"].get("numeric_stats", {})
+                cols = st.columns(3)
+                
+                # Metric 1: Row Count
+                with cols[0]:
+                    st.metric("Total Records", msg.get("row_count", 0))
+                
+                # Metric 2 & 3: Dynamic
+                idx = 1
+                for col_name, col_stats in stats.items():
+                    if idx >= 3: break
+                    if "sum" in col_stats:
+                        with cols[idx]:
+                            st.metric(f"Total {col_name.title()}", f"{col_stats['sum']:,.0f}")
+                        idx += 1
+                    elif "avg" in col_stats:
+                        with cols[idx]:
+                            st.metric(f"Avg {col_name.title()}", f"{col_stats['avg']:,.2f}")
+                        idx += 1
 
             # 3. Tabs for Details in history
             # Only show tabs if there is SQL or Data to show
@@ -567,18 +589,40 @@ def render_chat():
                         # 1. Main Answer
                         st.markdown(response.get("message", "No response"))
                         
-                        # SHOW INSIGHTS HERE (High Visibility)
-                        if response.get("insights") and response["insights"].get("insight_text"):
+                        # 1. Hero Metrics (Premium Dashboard)
+                        if response.get("insights"):
+                            # Create a container for metrics
+                            with st.container():
+                                cols = st.columns(3)
+                                # Metric 1: Records found
+                                with cols[0]:
+                                    st.metric("Total Records", response.get("row_count", 0))
+                                
+                                # Dynamic Metrics from Statistics
+                                stats = response["insights"].get("numeric_stats", {})
+                                idx = 1
+                                for col_name, col_stats in stats.items():
+                                    if idx >= 3: break
+                                    # Prioritize SUM (Sales) then AVG (Rating)
+                                    if "sum" in col_stats and col_stats['sum'] > 0:
+                                        with cols[idx]:
+                                            st.metric(f"Total {col_name.title()}", f"{col_stats['sum']:,.0f}")
+                                        idx += 1
+                                    elif "avg" in col_stats:
+                                        with cols[idx]:
+                                            st.metric(f"Avg {col_name.title()}", f"{col_stats['avg']:,.2f}")
+                                        idx += 1
+
+                        # 2. Executive Brief (Strategy Deck) - ONLY IN DEEP ANALYSIS MODE
+                        if response.get("insights") and response["insights"].get("insight_type") == "ai":
                             with st.expander("✨ Executive Brief (Strategy Officer)", expanded=True):
-                                st.markdown(response["insights"]["insight_text"])
+                                st.markdown(response["insights"].get("insights_text", ""))
                         
-                        # 2. Metric Cards (if simple aggregation)
-                        if response.get("row_count") == 1 and response.get("data"):
-                            row = response["data"][0]
-                            # Find numeric keys
-                            num_keys = [k for k, v in row.items() if isinstance(v, (int, float))]
-                            if len(num_keys) == 1:
-                                st.metric(label=num_keys[0].replace("_", " ").title(), value=row[num_keys[0]])
+                        # Fallback for Simple Mode (Optional: Just show metrics or a small caption)
+                        elif response.get("insights") and response["insights"].get("insights_text"):
+                             # In fast mode, just show the summary as regular text, or not at all if redundant.
+                             # User wanted a "better" experience when ON. So when OFF, we keep it simple.
+                             st.caption(f"📝 Summary: {response['insights']['insights_text']}")
 
                         # 3. Tabs for Details
                         tab_names = ["📄 SQL", "📊 Data", "📈 Charts"]

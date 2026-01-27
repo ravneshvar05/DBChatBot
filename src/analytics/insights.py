@@ -15,6 +15,7 @@ from collections import Counter
 from src.core.logging_config import get_logger
 from src.core.config import get_settings
 from src.llm.client import LLMClient
+from src.llm.prompts.analysis_prompts import DEEP_MODE_SYSTEM_PROMPT
 
 logger = get_logger(__name__)
 
@@ -67,7 +68,8 @@ class InsightsGenerator:
             "numeric_stats": {},
             "top_values": {},
             "column_types": {},
-            "insights_text": ""
+            "insights_text": "",
+            "insight_type": "simple"  # Default to simple
         }
         
         # Analyze each column
@@ -100,14 +102,20 @@ class InsightsGenerator:
                     insights["top_values"][col] = values[0] if values else None
         
         # Generate human-readable insights text
-        # OPTIMIZATION: Only use AI analysis for complex queries or aggregations, OR if user explicitly requested it.
-        if include_analysis or query_type in ["ranking", "aggregation", "comparison", "trend"]:
+        # OPTIMIZATION: STRICTLY respect the toggle.
+        # If include_analysis is True -> AI Mode (Executive Brief)
+        # If include_analysis is False -> Simple Mode (Basic Stats only)
+        
+        if include_analysis:
             insights["insights_text"] = self._generate_ai_insights(
                 data, insights, query_type
             )
+            insights["insight_type"] = "ai"
         else:
-            # Fallback to simple rule-based text for listings request to save 3-5s
+            # Fallback to simple rule-based text (Fast Mode)
+            # This is NOT an executive brief, just a summary.
             insights["insights_text"] = self._generate_simple_text(insights)
+            insights["insight_type"] = "simple"
         
         return insights
     
@@ -192,35 +200,32 @@ class InsightsGenerator:
     ) -> str:
         """Generate human-readable insights using Gemini."""
         try:
-            # Prepare data summary for prompt (limit rows to avoid token overflow if huge)
-            data_preview = str(data[:50]) # Send first 50 rows for detailed look
-            stats_summary = str(stats.get("numeric_stats", {}))
+            # Prepare data summary for prompt 
+            # STRICT DATA CONTRACT: Deep Analysis gets ONLY derived metrics. NO raw data.
+            # We strictly filter what goes into the prompt.
+            
+            stats_context = {
+                "numeric_stats": stats.get("numeric_stats", {}),
+                "top_values": stats.get("top_values", {}),
+                "column_types": stats.get("column_types", {})
+            }
+            stats_summary = str(stats_context)
             
             prompt = f"""
-            Analyze the following dataset and statistical summary as a **Chief Strategy Officer**.
+            Analyze the following statistical metrics.
             
             Context:
             - Query Type: {query_type}
             - Row Count: {len(data)}
-            - Data Preview (First 50 rows): {data_preview}
             - Statistics: {stats_summary}
             
             Task:
-            Provide a High-Level Executive Brief using the following structure:
-            
-            1. **The "So What?"**: One sentence summary of the verified result.
-            2. **Key Drivers**: Why are the numbers this way? (Infer from brand/category context if possible).
-            3. **Operational Recommendation**: What specific action should the business take? (e.g. "Restock Adidas", "Cut ad spend on Nike").
-            
-            Style Rules:
-            - Be bold and opinionated based on the data.
-            - Use professional business terminology (ROI, Market Share, Inventory Turnover).
-            - If data shows "0 Sales", flag it as a CRITICAL DATA GAP or INVENTORY CRISIS.
+            Write the Executive Brief.
             """
             
             response = self.llm.generate(
                 user_message=prompt,
-                system_prompt="You are a Chief Strategy Officer. You provide actionable business advice, not just numbers.",
+                system_prompt=DEEP_MODE_SYSTEM_PROMPT,
                 model=self.settings.llm_model_analysis
             )
             

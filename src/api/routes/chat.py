@@ -132,7 +132,8 @@ async def send_message(request: ChatRequest, response: Response) -> ChatResponse
             sql_service = get_sql_service()
             result = sql_service.query(
                 question=sanitized_message,  # Use sanitized message
-                session_id=session_id
+                session_id=session_id,
+                include_analysis=request.include_analysis
             )
             
             return ChatResponse(

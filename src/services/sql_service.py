@@ -1,9 +1,16 @@
 """
-SQL Service - Orchestrates Text-to-SQL operations with memory and analytics.
+SQL Service - Orchestrated Text-to-SQL operations with OPTIMIZED memory and analytics.
+
+KEY OPTIMIZATIONS:
+1. Enhanced history context with structured formatting
+2. Better SQL extraction and reuse logic
+3. Smarter context window management
+4. Improved relevance filtering for context
+5. Better handling of multi-turn conversations
 
 This service handles the complete flow:
 1. Get schema context
-2. Retrieve conversation history for context
+2. Retrieve conversation history for context (OPTIMIZED)
 3. Generate SQL from natural language
 4. Validate the SQL
 5. Execute the query
@@ -14,8 +21,9 @@ This service handles the complete flow:
 
 This is the main entry point for text-to-SQL functionality.
 """
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass, field
+import re
 
 from src.core.logging_config import get_logger
 from src.core.config import get_settings
@@ -25,9 +33,9 @@ from src.llm.client import LLMClient, LLMError
 from src.llm.prompts import (
     get_sql_system_prompt,
     get_sql_user_prompt,
-    get_answer_system_prompt,
     get_answer_user_prompt,
 )
+from src.llm.prompts.analysis_prompts import FAST_MODE_SYSTEM_PROMPT
 from src.memory import get_memory_manager, MemoryManager, ConversationMemory
 from src.analytics import ResultFormatter, InsightsGenerator, QueryClassifier
 from src.analytics.decomposer import QueryDecomposer
@@ -145,10 +153,8 @@ class SQLService:
             
             # Get common context
             schema = self._get_schema()
-            history_context = self._get_history_context(memory)
+            history_context = self._get_history_context(memory, question)  # OPTIMIZED: Pass current question
             
-
-
             if len(sub_questions) <= 1:
                 # Single path (optimized) -- Return directly, NO aggregation wrapper
                 qs = sub_questions[0] if sub_questions else question
@@ -293,36 +299,294 @@ class SQLService:
             logger.debug(f"Cached enhanced schema: {len(self._schema_cache)} chars")
         return self._schema_cache
     
-    def _get_history_context(self, memory: Optional[ConversationMemory]) -> str:
+    # ==================== OPTIMIZED CONTEXT HANDLING ====================
+    
+    def _extract_sql_from_message(self, content: str) -> Optional[str]:
         """
-        Format conversation history for SQL generation context.
+        Extract SQL query from message content.
+        Handles both inline [SQL Used: ...] format and code blocks.
+        """
+        # Try to extract from [SQL Used: ...] tag
+        sql_match = re.search(r'\[SQL Used:\s*(.+?)\]', content, re.DOTALL)
+        if sql_match:
+            return sql_match.group(1).strip()
         
-        Returns a string summarizing recent Q&A pairs to help the LLM
+        # Try to extract from code blocks
+        code_match = re.search(r'```sql?\n(.+?)\n```', content, re.DOTALL | re.IGNORECASE)
+        if code_match:
+            return code_match.group(1).strip()
+        
+        return None
+    
+    def _extract_key_entities(self, question: str) -> Dict[str, List[str]]:
+        """
+        Extract key entities from the question for context matching.
+        Returns dict with entity types and values.
+        """
+        entities = {
+            'tables': [],
+            'columns': [],
+            'conditions': [],
+            'numbers': []
+        }
+        
+        # Extract potential table names from schema
+        for table in self.allowed_tables:
+            if table.lower() in question.lower():
+                entities['tables'].append(table)
+        
+        # Extract numbers (useful for "same as before", "top N", etc.)
+        numbers = re.findall(r'\b\d+\b', question)
+        entities['numbers'].extend(numbers)
+        
+        # Extract comparison operators and conditions
+        conditions = re.findall(r'\b(greater than|less than|equal to|more than|at least|top|bottom|first|last)\b', 
+                               question.lower())
+        entities['conditions'].extend(conditions)
+        
+        return entities
+    
+    def _is_follow_up_question(self, question: str) -> bool:
+        """
+        Detect if the question is a follow-up that depends on previous context.
+        """
+        follow_up_indicators = [
+            # Reference to previous results
+            r'\b(same|similar|those|these|that|them|it)\b',
+            r'\b(previous|last|earlier|above)\b',
+            
+            # Modification requests
+            r'\b(also|too|additionally|furthermore)\b',
+            r'\b(but|except|without|excluding)\b',
+            r'\b(instead|rather than)\b',
+            
+            # Comparison or extension
+            r'\b(compared to|versus|vs|difference)\b',
+            r'\b(add|include|show me more)\b',
+            
+            # Refinement
+            r'\b(only|just|specifically)\b',
+            r'\b(change|update|modify)\b',
+            
+            # Direct references
+            r'\b(and|with)\b.*\?$',  # "and what about...?"
+        ]
+        
+        question_lower = question.lower()
+        
+        for pattern in follow_up_indicators:
+            if re.search(pattern, question_lower):
+                logger.debug(f"Follow-up detected via pattern: {pattern}")
+                return True
+        
+        return False
+    
+    def _calculate_relevance_score(
+        self, 
+        current_question: str, 
+        past_question: str, 
+        past_sql: Optional[str]
+    ) -> float:
+        """
+        Calculate how relevant a past conversation turn is to the current question.
+        Returns score between 0.0 and 1.0.
+        """
+        score = 0.0
+        current_lower = current_question.lower()
+        past_lower = past_question.lower()
+        
+        # 1. Check for shared entities (tables, columns)
+        current_entities = self._extract_key_entities(current_question)
+        past_entities = self._extract_key_entities(past_question)
+        
+        # Shared tables = high relevance
+        shared_tables = set(current_entities['tables']) & set(past_entities['tables'])
+        if shared_tables:
+            score += 0.4 * min(len(shared_tables) / max(len(current_entities['tables']), 1), 1.0)
+        
+        # 2. Check for word overlap (simple but effective)
+        current_words = set(current_lower.split())
+        past_words = set(past_lower.split())
+        
+        # Remove common stop words
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
+                     'of', 'with', 'by', 'from', 'what', 'how', 'show', 'me', 'get', 'find'}
+        current_words = current_words - stop_words
+        past_words = past_words - stop_words
+        
+        if current_words and past_words:
+            overlap = len(current_words & past_words) / len(current_words | past_words)
+            score += 0.3 * overlap
+        
+        # 3. SQL similarity (if past SQL exists)
+        if past_sql:
+            # Check if current question mentions columns/tables from past SQL
+            sql_lower = past_sql.lower()
+            sql_entities = re.findall(r'\b(\w+)\b', sql_lower)
+            
+            current_mentions_sql_entity = any(
+                entity in current_lower for entity in sql_entities 
+                if len(entity) > 3  # Ignore short words
+            )
+            
+            if current_mentions_sql_entity:
+                score += 0.3
+        
+        return min(score, 1.0)
+    
+    def _get_history_context(
+        self, 
+        memory: Optional[ConversationMemory],
+        current_question: str = ""
+    ) -> str:
+        """
+        OPTIMIZED: Format conversation history for SQL generation context.
+        
+        Improvements:
+        1. Detects follow-up questions and adjusts context accordingly
+        2. Ranks past messages by relevance to current question
+        3. Includes more structured SQL information
+        4. Better truncation and formatting
+        5. Highlights reusable SQL patterns
+        
+        Returns a string summarizing relevant Q&A pairs to help the LLM
         understand follow-up questions.
         """
         if not memory or memory.is_empty:
             return ""
         
-        # Get recent messages (last 6 = 3 Q&A pairs)
-        recent = memory.get_recent_history(n=6)
+        # Detect if this is a follow-up question
+        is_follow_up = self._is_follow_up_question(current_question)
+        
+        # Adjust how many messages to retrieve based on follow-up detection
+        # Follow-ups need more context; standalone questions need less
+        n_messages = 10 if is_follow_up else 6
+        
+        # Get recent messages
+        recent = memory.get_recent_history(n=n_messages)
+        
+        logger.debug(f"[MEMORY_OPTIMIZED] Retrieved {len(recent)} messages for context (follow_up={is_follow_up})")
         
         if not recent:
             return ""
         
-        # Format as conversation context
-        context_parts = ["\n--- Previous conversation context ---"]
+        # Score and filter messages by relevance
+        scored_messages = []
+        for i in range(0, len(recent), 2):  # Process Q&A pairs
+            if i + 1 >= len(recent):
+                break
+            
+            user_msg = recent[i]
+            assistant_msg = recent[i + 1]
+            
+            if user_msg['role'] != 'user' or assistant_msg['role'] != 'assistant':
+                continue
+            
+            past_question = user_msg['content']
+            past_answer = assistant_msg['content']
+            past_sql = assistant_msg.get('metadata', {}).get('sql')
+            past_row_count = assistant_msg.get('metadata', {}).get('row_count', 0)
+            
+            # Calculate relevance
+            relevance = self._calculate_relevance_score(
+                current_question, 
+                past_question, 
+                past_sql
+            )
+            
+            # For follow-up questions, keep all recent context
+            # For standalone questions, filter by relevance
+            if is_follow_up or relevance > 0.2:
+                scored_messages.append({
+                    'question': past_question,
+                    'answer': past_answer,
+                    'sql': past_sql,
+                    'row_count': past_row_count,
+                    'relevance': relevance,
+                    'index': i // 2
+                })
         
-        for msg in recent:
-            role_label = "User" if msg["role"] == "user" else "Assistant"
-            # Truncate long responses for context
-            content = msg["content"][:300]
-            if len(msg["content"]) > 300:
-                content += "..."
-            context_parts.append(f"{role_label}: {content}")
+        if not scored_messages:
+            return ""
         
-        context_parts.append("--- End of context ---\n")
+        # Sort by relevance (highest first) but keep chronological order for ties
+        scored_messages.sort(key=lambda x: (-x['relevance'], -x['index']))
         
-        return "\n".join(context_parts)
+        # Take top N most relevant (limit context size)
+        max_context_pairs = 3 if is_follow_up else 2
+        relevant_messages = scored_messages[:max_context_pairs]
+        
+        # Re-sort by chronological order for natural flow
+        relevant_messages.sort(key=lambda x: x['index'])
+        
+        # Format context with enhanced structure
+        context_parts = []
+        
+        if is_follow_up:
+            context_parts.append(
+                "\n=== CONVERSATION CONTEXT (Follow-up detected) ==="
+            )
+        else:
+            context_parts.append(
+                "\n=== RELEVANT CONVERSATION HISTORY ==="
+            )
+        
+        for idx, msg in enumerate(relevant_messages, 1):
+            # Format question
+            context_parts.append(f"\n[Q{idx}] {msg['question']}")
+            
+            # Format SQL with key details highlighted
+            if msg['sql']:
+                sql_preview = msg['sql']
+                
+                # Extract key SQL components for easy reuse
+                tables_used = re.findall(r'FROM\s+(\w+)', msg['sql'], re.IGNORECASE)
+                where_clause = re.search(r'WHERE\s+(.+?)(?:GROUP BY|ORDER BY|LIMIT|$)', 
+                                        msg['sql'], re.IGNORECASE | re.DOTALL)
+                order_by = re.search(r'ORDER BY\s+(.+?)(?:LIMIT|$)', 
+                                    msg['sql'], re.IGNORECASE)
+                limit = re.search(r'LIMIT\s+(\d+)', msg['sql'], re.IGNORECASE)
+                
+                # Build structured SQL context
+                sql_details = []
+                if tables_used:
+                    sql_details.append(f"Tables: {', '.join(set(tables_used))}")
+                if where_clause:
+                    sql_details.append(f"Filters: {where_clause.group(1).strip()[:100]}")
+                if order_by:
+                    sql_details.append(f"Sorting: {order_by.group(1).strip()}")
+                if limit:
+                    sql_details.append(f"Limit: {limit.group(1)}")
+                
+                context_parts.append(f"   [SQL Used: {sql_preview}]")
+                if sql_details:
+                    context_parts.append(f"   [Key Components: {' | '.join(sql_details)}]")
+                
+                if msg['row_count'] > 0:
+                    context_parts.append(f"   [Result: {msg['row_count']} rows returned]")
+            
+            # Format answer (truncated)
+            answer_preview = msg['answer'][:200]
+            if len(msg['answer']) > 200:
+                answer_preview += "..."
+            context_parts.append(f"[A{idx}] {answer_preview}")
+        
+        context_parts.append("\n=== END OF CONTEXT ===")
+        context_parts.append(
+            "\nIMPORTANT: If the current question refers to 'same', 'those', 'that', etc., "
+            "reuse the relevant SQL filters, tables, and conditions from above.\n"
+        )
+        
+        formatted_context = "\n".join(context_parts)
+        
+        logger.debug(
+            f"[MEMORY_OPTIMIZED] Generated context with {len(relevant_messages)} relevant pairs "
+            f"(avg relevance: {sum(m['relevance'] for m in relevant_messages) / len(relevant_messages):.2f})"
+        )
+        
+        return formatted_context
+    
+    # ==================== END OPTIMIZED CONTEXT HANDLING ====================
     
     def _generate_sql(
         self,
@@ -350,9 +614,24 @@ class SQLService:
         sql = response.strip()
         
         # Remove markdown code blocks if present
-        if sql.startswith("```"):
-            lines = sql.split("\n")
-            sql = "\n".join(lines[1:-1]) if len(lines) > 2 else sql
+        if "```" in sql:
+            # Find the first code block
+            start = sql.find("```")
+            # Check if there's a language tag (e.g., ```sql)
+            newline = sql.find("\n", start)
+            if newline != -1:
+                start = newline + 1
+            else:
+                start = start + 3 # Fallback if no newline after ```
+            
+            # Find the end of the block
+            end = sql.find("```", start)
+            if end != -1:
+                sql = sql[start:end]
+            else:
+                # If no closing block, assume rest of string is code (handles truncation)
+                sql = sql[start:]
+            
             sql = sql.strip()
         
         logger.info(f"Generated SQL: {sql[:100]}...")
@@ -372,7 +651,10 @@ class SQLService:
         if not results or row_count == 0:
             return "No data found matching your query."
         
-        system_prompt = get_answer_system_prompt()
+        # STRICT ANALYST MODE: Use the Fast Mode Prompt (Factual, Minimal)
+        # Deep analysis (Strategy) is handled separately by InsightsGenerator.
+        system_prompt = FAST_MODE_SYSTEM_PROMPT
+        
         user_prompt = get_answer_user_prompt(
             question, sql, results, row_count, insights
         )
@@ -382,7 +664,7 @@ class SQLService:
         answer = self.llm.generate(
             user_message=user_prompt,
             system_prompt=system_prompt,
-            model=self.settings.llm_model_smart
+            model=self.settings.llm_model_fast
         )
         
         return answer.strip()

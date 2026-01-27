@@ -57,7 +57,8 @@ class LLMClient:
         user_message: str,
         system_prompt: Optional[str] = None,
         history: Optional[List[Dict[str, str]]] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        stop: Optional[List[str]] = None
     ) -> str:
         """
         Generate completion with robust 4-layer fallback.
@@ -93,9 +94,9 @@ class LLMClient:
                     time.sleep(1 * i) # Linear backoff: 0s, 1s, 2s, 3s
                 
                 if provider == "google":
-                    return self._generate_google(user_message, system_prompt, history, target_model)
+                    return self._generate_google(user_message, system_prompt, history, target_model, stop)
                 else:
-                    return self._generate_groq(user_message, system_prompt, history, target_model)
+                    return self._generate_groq(user_message, system_prompt, history, target_model, stop)
                     
             except Exception as e:
                 # Log usage error vs rate limit
@@ -112,7 +113,7 @@ class LLMClient:
         logger.critical("ALL LLM PROVIDERS FAILED.")
         raise LLMError(f"All 4 layers of LLM defense failed. Last error: {last_error}")
 
-    def _generate_groq(self, user_message, system_prompt, history, model):
+    def _generate_groq(self, user_message, system_prompt, history, model, stop=None):
         """Execute request using Groq."""
         messages = [{"role": "system", "content": system_prompt}]
         if history:
@@ -125,12 +126,13 @@ class LLMClient:
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                stop=stop
             )
             return response.choices[0].message.content
         except Exception as e:
             raise e
 
-    def _generate_google(self, user_message, system_prompt, history, model):
+    def _generate_google(self, user_message, system_prompt, history, model, stop=None):
         """Execute request using Google Gemini."""
         try:
             # Map common model names if needed
@@ -149,8 +151,13 @@ class LLMClient:
                     role = "user" if msg["role"] == "user" else "model"
                     chat_history.append({"role": role, "parts": [msg["content"]]})
             
+            # Configure generation config if stop sequences provided
+            generation_config = genai.types.GenerationConfig(
+                stop_sequences=stop
+            ) if stop else None
+
             chat = model_instance.start_chat(history=chat_history)
-            response = chat.send_message(user_message)
+            response = chat.send_message(user_message, generation_config=generation_config)
             return response.text
         except Exception as e:
             # Google sometimes blocks content, handle gracefully
