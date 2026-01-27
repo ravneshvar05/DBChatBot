@@ -145,6 +145,20 @@ def get_settings() -> Settings:
         database_url = database_url.replace("postgres://", "postgresql://", 1)
     if database_url.startswith("mysql://"):
         database_url = database_url.replace("mysql://", "mysql+pymysql://", 1)
+        
+    # FIX: Remove ssl-mode parameter (not supported by pymysql driver)
+    # Aiven URLs often include this, but it crashes the python driver.
+    # We strip it to allow connection (pymysql handles SSL negotiation automatically or via different means)
+    if "ssl-mode=" in database_url:
+        import re
+        # Remove ssl-mode param (either at start of query string or middle)
+        database_url = re.sub(r"[?&]ssl-mode=[^&]+", "", database_url)
+        
+        # Ensure if we removed the first param but left others, we clean up the syntax
+        # e.g. /db&other=1 -> /db?other=1 is not handled here but usually ssl-mode is the ONLY param
+        # Simplest fix for common Aiven URLs which end with it:
+        if "?" not in database_url and "&" in database_url:
+           database_url = database_url.replace("&", "?", 1) # simple patch if needed but re.sub usually safe enough for trailing
     
     return Settings(
         # Application
