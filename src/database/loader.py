@@ -219,6 +219,11 @@ class CSVLoader:
                 logger.debug(f"Dropped existing table '{table_name}'")
             
             columns = []
+            
+            # FIX: Add Primary Key for Cloud Databases (DigitalOcean/Aiven requirement)
+            # using Integer + primary_key=True + autoincrement=True
+            columns.append(Column('id', Integer, primary_key=True, autoincrement=True))
+            
             for col_name, col_type in column_types.items():
                 if not col_name or not col_name.strip():
                     continue
