@@ -553,7 +553,10 @@ def render_chat():
                 st.success(f"💡 Insight: {msg['insights']['insight_text']}")
     
     # Chat input and controls
-    col_input, col_toggle = st.columns([5, 1])
+    # FIX: Adjusted ratio to give the toggle more room (was [5,1], now [8,2] or similar)
+    # The toggle needs about 120px to not wrap "Analysis"
+    col_input, col_toggle = st.columns([0.80, 0.20])
+    
     
     with col_toggle:
         # Pushes the toggle down to align with input
