@@ -52,6 +52,17 @@ async def lifespan(app: FastAPI):
     logger.info(f"Rate Limit: {settings.rate_limit_per_minute} req/min")
     logger.info(f"Audit Logging: {settings.enable_audit_logging}")
     
+    # Initialize persistent memory tables (if enabled)
+    # This ensures tables exist in Cloud DB on fresh deploy
+    if settings.memory_persistent:
+        from src.database.init_db import init_conversation_tables
+        try:
+            init_conversation_tables()
+            logger.info("Checked/Initialized conversation tables.")
+        except Exception as e:
+            logger.error(f"Failed to auto-init tables: {e}")
+    
+    
     yield  # Application runs here
     
     # Shutdown
