@@ -140,8 +140,11 @@ def get_settings() -> Settings:
              # If components are also missing, raise error
              raise ValueError("Missing database configuration. Set DATABASE_URL or (DB_HOST, DB_USER, ...)")
 
+    # FIX: Ensure we use the correct driver for SQLAlchemy
     if database_url.startswith("postgres://"):
         database_url = database_url.replace("postgres://", "postgresql://", 1)
+    if database_url.startswith("mysql://"):
+        database_url = database_url.replace("mysql://", "mysql+pymysql://", 1)
     
     return Settings(
         # Application
