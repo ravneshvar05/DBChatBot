@@ -9,4 +9,4 @@ sleep 5
 
 # Start the Frontend (Streamlit)
 # server.port 7860 is REQUIRED by Hugging Face Spaces
-streamlit run streamlit_app.py --server.port=7860 --server.address=0.0.0.0 --server.enableCORS=false --server.enableXsrfProtection=false
+streamlit run streamlit_app.py

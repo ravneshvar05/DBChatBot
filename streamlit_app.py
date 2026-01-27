@@ -440,16 +440,26 @@ def render_sidebar():
                          
                      row_count = f"({table.get('row_count', '?')} rows)" if isinstance(table, dict) else ""
                      
-                     col_t1, col_t2 = st.columns([3, 1])
+                     # Beautify display name
+                     display_name = table_name.replace("_", " ").title()
+                     # Truncate if very long
+                     if len(display_name) > 22:
+                         display_name = display_name[:20] + "..."
+                         
+                     row_count = f"({table.get('row_count', '?')} rows)" if isinstance(table, dict) else ""
+                     
+                     # Sidebar column ratio - give more space to text
+                     col_t1, col_t2 = st.columns([0.8, 0.2])
                      with col_t1:
-                         st.markdown(f"**{table_name}**")
+                         st.markdown(f"{display_name}")
                          if row_count:
                              st.caption(row_count)
                      with col_t2:
-                         if st.button("✕", key=f"del_{table_name}", help=f"Delete {table_name}"):
+                         # Use a smaller/simpler remove button
+                         if st.button("🗑️", key=f"del_{table_name}", help=f"Delete {table_name}"):
                              delete_table(table_name)
                              st.rerun()
-                     st.markdown("---")
+                     st.divider()
             else:
                 st.info("No tables found.")
 
