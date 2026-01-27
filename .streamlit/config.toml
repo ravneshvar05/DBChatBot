@@ -9,3 +9,10 @@ address = "0.0.0.0"
 [browser]
 gatherUsageStats = false
 serverAddress = "0.0.0.0"
+[theme]
+base = "light"
+backgroundColor = "#fdfbf7"
+secondaryBackgroundColor = "#f9f8f4"
+primaryColor = "#d97706"
+textColor = "#334155"
+font = "sans serif"
