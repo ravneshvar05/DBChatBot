@@ -24,3 +24,6 @@ A powerful, conversation-aware analytics chatbot that lets you query your databa
 *   **AI:** Llama 3.3 (via Groq) + Gemini (via Google)
 
 ## Deployed on Hugging Face Spaces 🌍
+git add .
+git commit -m "Fix Runtime Config"
+git push space main

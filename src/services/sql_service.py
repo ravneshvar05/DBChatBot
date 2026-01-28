@@ -598,9 +598,21 @@ class SQLService:
         system_prompt = get_sql_system_prompt(schema)
         
         # Enhance user prompt with history context
-        user_prompt = get_sql_user_prompt(question)
         if history_context:
-            user_prompt = f"{history_context}\nCurrent question: {user_prompt}"
+            # OPTIMIZED: Explicitly link context to the new question to force context awareness
+            user_prompt = (
+                f"{history_context}\n\n"
+                f"═══════════════════════════════════════════════════════════\n"
+                f"CURRENT REQUEST (Follow-up)\n"
+                f"═══════════════════════════════════════════════════════════\n"
+                f"Based on the conversation history above, write a SQL query for the following question.\n"
+                f"CRITICAL: Reuse filters, tables, and logic from the history where appropriate (e.g. 'same', 'those', 'only').\n\n"
+                f"Question: {question}\n\n"
+                f"SQL:"
+            )
+        else:
+            # Default prompt for new questions
+            user_prompt = get_sql_user_prompt(question)
         
         logger.debug(f"Generating SQL with LLM (with_context={bool(history_context)})...")
         
