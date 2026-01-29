@@ -207,7 +207,7 @@ def load_session(session_id: str):
                 # Unpack metadata fields that the UI expects at the top level
                 meta = msg.get("metadata", {})
                 if meta:
-                    for key in ["sql", "sql_queries", "data", "formatted_data_list", "row_count", "insights"]:
+                    for key in ["sql", "sql_queries", "data", "formatted_data_list", "row_count", "insights", "token_usage"]:
                         if key in meta:
                             frontend_msg[key] = meta[key]
                             
@@ -503,8 +503,11 @@ def render_chat():
 
             # 3. Tabs for Details in history
             # Only show tabs if there is SQL or Data to show
-            if msg.get("sql") or msg.get("data") or msg.get("sql_queries"):
+            if msg.get("sql") or msg.get("data") or msg.get("sql_queries") or msg.get("token_usage"):
                 tab_names = ["📄 SQL", "📊 Data", "📈 Charts"]
+                if msg.get("token_usage"):
+                    tab_names.append("🔢 Usage")
+                
                 tabs = st.tabs(tab_names)
                 
                 # Tab 1: SQL
@@ -557,6 +560,15 @@ def render_chat():
                                 st.info("No chart available.")
                     else:
                         st.info("Not enough data for chart.")
+
+                # Tab 4: Usage
+                if msg.get("token_usage") and len(tabs) > 3:
+                     with tabs[3]:
+                        usage = msg["token_usage"]
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Total Tokens", usage.get("total_tokens", 0))
+                        c2.metric("Prompt Tokens", usage.get("prompt_tokens", 0))
+                        c3.metric("Completion Tokens", usage.get("completion_tokens", 0))
             
             # Show insights if available
             if msg.get("insights") and msg["insights"].get("insight_text"):
@@ -639,6 +651,8 @@ def render_chat():
 
                         # 3. Tabs for Details
                         tab_names = ["📄 SQL", "📊 Data", "📈 Charts"]
+                        if response.get("token_usage"):
+                            tab_names.append("🔢 Usage")
                         tabs = st.tabs(tab_names)
                         
                         # Tab 1: SQL
@@ -695,6 +709,15 @@ def render_chat():
                                      st.info("No suitable chart could be generated for this data.")
                             else:
                                 st.info("Not enough data to generate a chart (need >1 row).")
+                        
+                        # Tab 4: Usage
+                        if response.get("token_usage") and len(tabs) > 3:
+                             with tabs[3]:
+                                usage = response["token_usage"]
+                                c1, c2, c3 = st.columns(3)
+                                c1.metric("Total Tokens", usage.get("total_tokens", 0))
+                                c2.metric("Prompt Tokens", usage.get("prompt_tokens", 0))
+                                c3.metric("Completion Tokens", usage.get("completion_tokens", 0))
                             
 
                     
@@ -707,7 +730,10 @@ def render_chat():
                         "data": response.get("data"),
                         "formatted_data_list": response.get("formatted_data_list"),
                         "row_count": response.get("row_count"),
-                        "insights": response.get("insights")
+                        "formatted_data_list": response.get("formatted_data_list"),
+                        "row_count": response.get("row_count"),
+                        "insights": response.get("insights"),
+                        "token_usage": response.get("token_usage")
                     })
 
 

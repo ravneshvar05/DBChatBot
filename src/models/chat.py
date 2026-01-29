@@ -96,6 +96,12 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="List of formatted data tables for multi-part questions"
     )
+    
+    # Token Usage
+    token_usage: Optional[Dict[str, int]] = Field(
+        default=None,
+        description="Token usage statistics (prompt_tokens, completion_tokens, total_tokens)"
+    )
 
 
 class HealthResponse(BaseModel):

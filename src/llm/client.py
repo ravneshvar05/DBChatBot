@@ -15,12 +15,19 @@ Why a separate client class:
 """
 import google.generativeai as genai
 from typing import Optional, List, Dict
+from dataclasses import dataclass
 from groq import Groq, APIError, RateLimitError, APIConnectionError
 
 from src.core.config import get_settings
 from src.core.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+@dataclass
+class LLMResponse:
+    """Standardized response from LLM providers."""
+    content: str
+    token_usage: Optional[Dict[str, int]] = None
 
 
 class LLMClient:
@@ -59,7 +66,7 @@ class LLMClient:
         history: Optional[List[Dict[str, str]]] = None,
         model: Optional[str] = None,
         stop: Optional[List[str]] = None
-    ) -> str:
+    ) -> LLMResponse:
         """
         Generate completion with robust 4-layer fallback.
         """
@@ -113,7 +120,7 @@ class LLMClient:
         logger.critical("ALL LLM PROVIDERS FAILED.")
         raise LLMError(f"All 4 layers of LLM defense failed. Last error: {last_error}")
 
-    def _generate_groq(self, user_message, system_prompt, history, model, stop=None):
+    def _generate_groq(self, user_message, system_prompt, history, model, stop=None) -> LLMResponse:
         """Execute request using Groq."""
         messages = [{"role": "system", "content": system_prompt}]
         if history:
@@ -128,11 +135,24 @@ class LLMClient:
                 max_tokens=self.max_tokens,
                 stop=stop
             )
-            return response.choices[0].message.content
+            
+            # Extract token usage
+            usage = None
+            if response.usage:
+                usage = {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens
+                }
+            
+            return LLMResponse(
+                content=response.choices[0].message.content,
+                token_usage=usage
+            )
         except Exception as e:
             raise e
 
-    def _generate_google(self, user_message, system_prompt, history, model, stop=None):
+    def _generate_google(self, user_message, system_prompt, history, model, stop=None) -> LLMResponse:
         """Execute request using Google Gemini."""
         try:
             # Map common model names if needed
@@ -158,7 +178,17 @@ class LLMClient:
 
             chat = model_instance.start_chat(history=chat_history)
             response = chat.send_message(user_message, generation_config=generation_config)
-            return response.text
+            
+            # Extract token usage
+            usage = None
+            if hasattr(response, "usage_metadata"):
+                usage = {
+                    "prompt_tokens": response.usage_metadata.prompt_token_count,
+                    "completion_tokens": response.usage_metadata.candidates_token_count,
+                    "total_tokens": response.usage_metadata.total_token_count
+                }
+            
+            return LLMResponse(content=response.text, token_usage=usage)
         except Exception as e:
             # Google sometimes blocks content, handle gracefully
             if hasattr(e, "finish_reason") and e.finish_reason == 3: # SAFETY

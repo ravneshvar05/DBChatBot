@@ -64,6 +64,7 @@ class SQLResponse:
     # Phase 9: Multi-Question Support
     sql_queries: List[str] = field(default_factory=list)
     formatted_data_list: List[str] = field(default_factory=list)
+    token_usage: Optional[Dict[str, int]] = None
     
     def to_dict(self) -> dict:
         """Convert to dictionary for API response."""
@@ -77,6 +78,7 @@ class SQLResponse:
             "formatted_data": self.formatted_data,
             "insights": self.insights,
             "query_type": self.query_type,
+            "token_usage": self.token_usage,
         }
 
 
@@ -129,6 +131,12 @@ class SQLService:
             f"SQLService initialized with {len(self.allowed_tables)} tables, "
             f"memory support, and analytics formatting"
         )
+        
+    def _merge_usage(self, u1: Optional[Dict], u2: Optional[Dict]) -> Dict[str, int]:
+        """Helper to merge token usage dictionaries."""
+        if not u1: return u2 or {}
+        if not u2: return u1
+        return {k: u1.get(k, 0) + u2.get(k, 0) for k in set(u1) | set(u2)}
     
     def query(
         self,
@@ -196,7 +204,7 @@ class SQLService:
         """Process a single atomic question."""
         try:
             # Step 3: Generate SQL
-            sql = self._generate_sql(question, schema, history_context)
+            sql, sql_usage = self._generate_sql(question, schema, history_context)
             
             if sql.startswith("ERROR:"):
                 if store_memory:
@@ -204,7 +212,8 @@ class SQLService:
                 return SQLResponse(
                     success=False,
                     answer=f"I couldn't generate a query for that question. {sql}",
-                    error=sql
+                    error=sql,
+                    token_usage=sql_usage
                 )
             
             # Step 4: Validate SQL
@@ -251,9 +260,12 @@ class SQLService:
             formatted_data = self._format_results(result.data, query_type)
             
             # Step 8: Generate natural language answer
-            answer = self._generate_answer(
+            answer, answer_usage = self._generate_answer(
                 question, sql, result.data, result.row_count, insights
             )
+            
+            # Combine usage
+            total_usage = self._merge_usage(sql_usage, answer_usage)
             
             # Step 9: Store Q&A in session memory
             if store_memory:
@@ -267,7 +279,8 @@ class SQLService:
                 row_count=result.row_count,
                 formatted_data=formatted_data,
                 insights=insights,
-                query_type=query_type.value
+                query_type=query_type.value,
+                token_usage=total_usage
             )
             
         except LLMError as e:
@@ -593,7 +606,7 @@ class SQLService:
         question: str,
         schema: str,
         history_context: str = ""
-    ) -> str:
+    ) -> Tuple[str, Optional[Dict[str, int]]]:
         """Generate SQL from natural language question."""
         system_prompt = get_sql_system_prompt(schema)
         
@@ -623,7 +636,7 @@ class SQLService:
         )
         
         # Clean up the response
-        sql = response.strip()
+        sql = response.content.strip()
         
         # Remove markdown code blocks if present
         if "```" in sql:
@@ -647,7 +660,7 @@ class SQLService:
             sql = sql.strip()
         
         logger.info(f"Generated SQL: {sql[:100]}...")
-        return sql
+        return sql, response.token_usage
     
     def _generate_answer(
         self,
@@ -656,12 +669,12 @@ class SQLService:
         results: list,
         row_count: int,
         insights: Optional[Dict[str, Any]] = None
-    ) -> str:
+    ) -> Tuple[str, Optional[Dict[str, int]]]:
         """Generate natural language answer from query results."""
         
         # Handle empty results
         if not results or row_count == 0:
-            return "No data found matching your query."
+            return "No data found matching your query.", None
         
         # STRICT ANALYST MODE: Use the Fast Mode Prompt (Factual, Minimal)
         # Deep analysis (Strategy) is handled separately by InsightsGenerator.
@@ -673,13 +686,13 @@ class SQLService:
         
         logger.debug("Generating natural language answer...")
         
-        answer = self.llm.generate(
+        llm_response = self.llm.generate(
             user_message=user_prompt,
             system_prompt=system_prompt,
             model=self.settings.llm_model_fast
         )
         
-        return answer.strip()
+        return llm_response.content.strip(), llm_response.token_usage
     
     def _store_success_in_memory(
         self,
@@ -758,6 +771,11 @@ class SQLService:
         # Calculate total rows
         total_rows = sum(r.row_count for r in results)
         
+        # Aggregate token usage
+        total_usage = {}
+        for r in results:
+            total_usage = self._merge_usage(total_usage, r.token_usage)
+        
         # Store aggregared result in memory
         self._store_success_in_memory(
             memory, 
@@ -782,7 +800,8 @@ class SQLService:
             insights={}, # Aggregated insights is complex, skipping for now
             query_type="multi_query",
             sql_queries=sql_queries,
-            formatted_data_list=formatted_data_list
+            formatted_data_list=formatted_data_list,
+            token_usage=total_usage
         )
         
     def clear_cache(self) -> None:

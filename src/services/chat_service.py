@@ -99,18 +99,20 @@ class ChatService:
             )
             
             # Store assistant response in memory
-            memory.add_assistant_message(llm_response)
+            memory.add_assistant_message(llm_response.content)
             
             response = ChatResponse(
-                message=llm_response,
+                message=llm_response.content,
                 session_id=session_id,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.utcnow(),
+                token_usage=llm_response.token_usage
             )
             
             logger.info(
                 f"Message processed: session={session_id}, "
-                f"response_length={len(llm_response)}, "
-                f"history_size={memory.message_count}"
+                f"response_length={len(llm_response.content)}, "
+                f"history_size={memory.message_count}, "
+                f"token_usage={llm_response.token_usage}"
             )
             
             return response

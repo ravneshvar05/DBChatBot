@@ -149,7 +149,8 @@ async def send_message(request: ChatRequest, response: Response) -> ChatResponse
                 query_type=result.query_type,
                 # Phase 9: Multi-Question Support
                 sql_queries=result.sql_queries,
-                formatted_data_list=result.formatted_data_list
+                formatted_data_list=result.formatted_data_list,
+                token_usage=result.token_usage
             )
         
         else:
@@ -168,7 +169,8 @@ async def send_message(request: ChatRequest, response: Response) -> ChatResponse
             return ChatResponse(
                 message=result.message,
                 session_id=session_id,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.utcnow(),
+                token_usage=result.token_usage
             )
             
     except ChatServiceError as e:
