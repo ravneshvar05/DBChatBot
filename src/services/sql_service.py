@@ -575,7 +575,14 @@ class SQLService:
                 if sql_details:
                     context_parts.append(f"   [Key Components: {' | '.join(sql_details)}]")
                 
-                if msg['row_count'] > 0:
+                # CRITICAL: Add explicit warning for limited queries
+                if limit and msg['row_count'] > 0:
+                    context_parts.append(
+                        f"   [⚠️ LIMIT ENFORCEMENT: Query returned {msg['row_count']} specific rows. "
+                        f"If current question is a refinement (\"only\", \"just\", \"but\"), "
+                        f"KEEP LIMIT {limit.group(1)} and ORDER BY to filter these EXACT {msg['row_count']} results.]"
+                    )
+                elif msg['row_count'] > 0:
                     context_parts.append(f"   [Result: {msg['row_count']} rows returned]")
             
             # Format answer (truncated)
@@ -586,9 +593,11 @@ class SQLService:
         
         context_parts.append("\n=== END OF CONTEXT ===")
         context_parts.append(
-            "\nIMPORTANT: If the current question refers to 'same', 'those', 'that', etc., "
-            "reuse the relevant SQL filters, tables, and conditions from above.\n"
+            "\nIMPORTANT: If the current question refers to 'same', 'those', 'that', OR is a refinement "
+            "(e.g., 'only X', 'just Y', 'but Z'), reuse the SQL structure from above. "
+            "For refinements: STRICTLY preserve LIMIT and ORDER BY to filter from the original results.\n"
         )
+
         
         formatted_context = "\n".join(context_parts)
         
@@ -612,20 +621,37 @@ class SQLService:
         
         # Enhance user prompt with history context
         if history_context:
-            # OPTIMIZED: Explicitly link context to the new question to force context awareness
+            # OPTIMIZED: Smart refinement detection - let LLM decide based on semantic understanding
             user_prompt = (
                 f"{history_context}\n\n"
                 f"═══════════════════════════════════════════════════════════\n"
                 f"CURRENT REQUEST (Follow-up)\n"
                 f"═══════════════════════════════════════════════════════════\n"
-                f"Based on the conversation history above, write a SQL query for the following question.\n"
-                f"CRITICAL: Reuse filters, tables, and logic from the history where appropriate (e.g. 'same', 'those', 'only').\n\n"
+                f"Based on the conversation history above, write a SQL query for the following question.\n\n"
+                f"⚠️ IMPORTANT: Determine if this is a REFINEMENT or NEW QUESTION\n\n"
+                f"🔍 REFINEMENT (use subquery to filter from exact previous N results):\n"
+                f"- User is adding constraints to the SAME previous results\n"
+                f"- Question is about filtering/narrowing what was already returned\n"
+                f"- Examples: \"only black ones\", \"just Nike\", \"under $100\", \"the ones in stock\"\n\n"
+                f"If REFINEMENT → Use this pattern:\n"
+                f"SELECT * FROM (\n"
+                f"    [COPY THE PREVIOUS FULL SQL QUERY HERE]\n"
+                f") AS original_results\n"
+                f"WHERE [NEW FILTER CONDITION]\n\n"
+                f"🆕 NEW QUESTION (write fresh query, ignore previous results):\n"
+                f"- User is asking for something DIFFERENT from previous question\n"
+                f"- Question mentions new product types, categories, or metrics\n"
+                f"- Examples: \"show me white shoes\" (different from previous), \"what about formal shoes\", \"sales data\"\n\n"
+                f"If NEW QUESTION → Write a fresh SQL query without subquery.\n\n"
+                f"💡 Use your judgment: If the question naturally builds on previous results = refinement. "
+                f"If it's asking for different data = new question.\n\n"
                 f"Question: {question}\n\n"
                 f"SQL:"
             )
         else:
             # Default prompt for new questions
             user_prompt = get_sql_user_prompt(question)
+
         
         logger.debug(f"Generating SQL with LLM (with_context={bool(history_context)})...")
         
