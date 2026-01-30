@@ -38,9 +38,16 @@ class CSVLoader:
     - Logs progress during loading
     """
     
-    def __init__(self, data_dir: Optional[Path] = None):
-        """Initialize CSV loader."""
-        self.db = get_database()
+    def __init__(self, data_dir: Optional[Path] = None, db_connection=None):
+        """
+        Initialize CSV loader.
+        
+        Args:
+            data_dir: Directory containing CSV files
+            db_connection: Optional DatabaseConnection instance. If not provided, uses default.
+        """
+        from src.database.connection import get_database
+        self.db = db_connection if db_connection is not None else get_database()
         self.data_dir = data_dir or Path(__file__).parent.parent.parent / "data"
         self.metadata = MetaData()
         logger.info(f"CSVLoader initialized: data_dir={self.data_dir}")

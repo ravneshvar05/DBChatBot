@@ -129,7 +129,25 @@ async def send_message(request: ChatRequest, response: Response) -> ChatResponse
     try:
         if request.mode == "sql":
             # SQL mode - Text-to-SQL with session context
-            sql_service = get_sql_service()
+            # Get session-specific database components
+            from src.database import get_session_components
+            from src.services.sql_service import SQLService
+            
+            db_conn, inspector, executor, loader = get_session_components(session_id)
+            
+            if inspector is None or executor is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No database connection found. Please connect to a database first via the frontend."
+                )
+            
+            # Initialize SQL service with session components
+            sql_service = SQLService(
+                memory_manager=None,  # Will use global singleton
+                executor=executor,
+                schema_inspector=inspector
+            )
+            
             result = sql_service.query(
                 question=sanitized_message,  # Use sanitized message
                 session_id=session_id,

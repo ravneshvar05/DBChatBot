@@ -61,9 +61,15 @@ class SchemaInspector:
         ...     print(f"{table.name}: {table.get_column_names()}")
     """
     
-    def __init__(self):
-        """Initialize schema inspector."""
-        self.db = get_database()
+    def __init__(self, db_connection=None):
+        """
+        Initialize schema inspector.
+        
+        Args:
+            db_connection: Optional DatabaseConnection instance. If not provided, uses default.
+        """
+        from src.database.connection import get_database
+        self.db = db_connection if db_connection is not None else get_database()
         logger.info("SchemaInspector initialized")
     
     def get_table_names(self) -> List[str]:

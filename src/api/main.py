@@ -27,7 +27,7 @@ from src.core.exceptions import (
     DatabaseError,
 )
 from src.core.audit import AuditMiddleware, SecurityHeadersMiddleware
-from src.api.routes import chat_router, health_router, database_router, session_router
+from src.api.routes import chat_router, health_router, database_router, session_router, connection_router
 from src.models.chat import ErrorResponse
 
 
@@ -67,6 +67,15 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info(f"Shutting down {settings.app_name}")
+    
+    # Clean up session connections
+    from src.database import get_connection_manager
+    try:
+        conn_manager = get_connection_manager()
+        conn_manager.close_all_connections()
+        logger.info("Closed all session connections")
+    except Exception as e:
+        logger.error(f"Error closing session connections: {e}")
 
 
 # Create FastAPI application
@@ -83,13 +92,14 @@ app = FastAPI(
     - **Persistent Memory**: Conversations survive restarts ✓
     - **Analytics Insights**: Auto-generated statistics ✓
     - **Rate Limiting**: Abuse prevention ✓
+    - **Dynamic Database Connections**: Connect to any MySQL/PostgreSQL database ✓
     
-    ## Current Phase: 7 - Safety & Reliability
+    ## Current Phase: Multi-Database Support
     
-    The assistant now includes rate limiting, input validation,
-    audit logging, and enhanced error handling.
+    The assistant now allows users to connect to their own databases
+    dynamically from the frontend interface.
     """,
-    version="0.7.0",
+    version="0.8.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -175,12 +185,13 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # ============================================================
 # Routers
-# ============================================================
+# ==============================================================
 
 app.include_router(health_router)
 app.include_router(chat_router)
 app.include_router(database_router)
 app.include_router(session_router)
+app.include_router(connection_router)  # NEW: Connection management
 
 
 # ============================================================

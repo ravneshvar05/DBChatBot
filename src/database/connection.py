@@ -41,16 +41,24 @@ class DatabaseConnection:
         ...     result = session.execute(text("SELECT 1"))
     """
     
-    def __init__(self):
-        """Initialize database engine with connection pooling."""
+    def __init__(self, connection_url: str = None):
+        """
+        Initialize database engine with connection pooling.
+        
+        Args:
+            connection_url: Optional connection URL. If not provided, uses settings.
+        """
         self.settings = get_settings()
+        
+        # Use provided URL or fall back to settings
+        db_url = connection_url or self.settings.database_url
         
         # Create engine with connection pool settings
         # pool_pre_ping: Test connections before using (handles stale connections)
         # pool_size: Number of connections to keep open
         # max_overflow: Additional connections allowed under load
         self.engine = create_engine(
-            self.settings.database_url,
+            db_url,
             pool_pre_ping=True,
             pool_size=5,
             max_overflow=10,
@@ -64,7 +72,7 @@ class DatabaseConnection:
             autoflush=False,
         )
         
-        logger.info("Database connection initialized")
+        logger.info(f"Database connection initialized: {db_url.split('@')[-1] if '@' in db_url else 'default'}")
     
     @contextmanager
     def get_session(self) -> Generator[Session, None, None]:

@@ -65,9 +65,15 @@ class QueryExecutor:
         ...         print(row)
     """
     
-    def __init__(self):
-        """Initialize query executor."""
-        self.db = get_database()
+    def __init__(self, db_connection=None):
+        """
+        Initialize query executor.
+        
+        Args:
+            db_connection: Optional DatabaseConnection instance. If not provided, uses default.
+        """
+        from src.database.connection import get_database
+        self.db = db_connection if db_connection is not None else get_database()
         logger.info("QueryExecutor initialized")
     
     def execute(

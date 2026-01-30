@@ -85,7 +85,7 @@ class QueryResponse(BaseModel):
     response_model=UploadResponse,
     summary="Upload and load a CSV file",
     description="""
-    Upload a CSV file and load it into the database.
+    Upload a CSV file and load it into the session's connected database.
     
     The file will be:
     1. Saved to the data/ directory
@@ -95,9 +95,10 @@ class QueryResponse(BaseModel):
     """
 )
 async def upload_csv(
+    session_id: str,
     file: UploadFile = File(..., description="CSV file to upload")
 ) -> UploadResponse:
-    """Upload a CSV file and load it into the database."""
+    """Upload a CSV file and load it into the session's database."""
     
     # Validate file type
     if not file.filename or not file.filename.endswith('.csv'):
@@ -110,9 +111,20 @@ async def upload_csv(
     safe_filename = file.filename.replace(" ", "_").lower()
     file_path = DATA_DIR / safe_filename
     
-    logger.info(f"Uploading CSV: {safe_filename}")
+    logger.info(f"Uploading CSV for session {session_id}: {safe_filename}")
     
     try:
+        from src.database import get_session_components
+        
+        # Get session-specific components
+        db_conn, inspector, executor, loader = get_session_components(session_id)
+        
+        if loader is None:
+            raise HTTPException(
+                status_code=400,
+                detail="No database connection found. Please connect to a database first."
+            )
+        
         # Ensure data directory exists
         DATA_DIR.mkdir(exist_ok=True)
         
@@ -122,12 +134,10 @@ async def upload_csv(
         
         logger.info(f"Saved file to: {file_path}")
         
-        # Load into database
-        loader = CSVLoader()
+        # Load into database using session connection
         table_name = file_path.stem.lower().replace(" ", "_").replace("-", "_")
         
         # Check if table already exists
-        inspector = SchemaInspector()
         existing_tables = inspector.get_table_names()
         
         if table_name in existing_tables:
@@ -146,6 +156,8 @@ async def upload_csv(
             rows_loaded=rows_loaded
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         # Clean up file if loading failed
@@ -209,15 +221,31 @@ async def delete_file(filename: str) -> Dict[str, str]:
     "/schema",
     response_model=SchemaResponse,
     summary="Get database schema",
-    description="Returns information about all tables and columns in the database."
+    description="Returns information about all tables and columns in the session's connected database."
 )
-async def get_schema() -> SchemaResponse:
-    """Get the current database schema."""
-    logger.info("Schema inspection requested")
+async def get_schema(session_id: str = None) -> SchemaResponse:
+    """Get the current database schema for a session."""
+    logger.info(f"Schema inspection requested for session: {session_id}")
     
     try:
-        inspector = SchemaInspector()
+        from src.database import get_session_components
+        
+        # Get session-specific components
+        db_conn, inspector, executor, loader = get_session_components(session_id)
+        
+        if inspector is None:
+            raise HTTPException(
+                status_code=400,
+                detail="No database connection found. Please connect to a database first."
+            )
+        
         tables = inspector.get_all_tables()
+        
+        # Filter out system tables
+        user_tables = [
+            t for t in tables 
+            if t.name not in ["conversation_sessions", "conversation_messages"]
+        ]
         
         return SchemaResponse(
             tables=[
@@ -234,10 +262,12 @@ async def get_schema() -> SchemaResponse:
                     ],
                     row_count=t.row_count,
                 )
-                for t in tables
+                for t in user_tables
             ],
-            table_count=len(tables),
+            table_count=len(user_tables),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Schema inspection failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -319,11 +349,11 @@ async def database_health() -> Dict[str, Any]:
 @router.delete(
     "/tables/{table_name}",
     summary="Delete a database table",
-    description="Drop a table from the database. Use with caution!"
+    description="Drop a table from the session's connected database. Use with caution!"
 )
-async def delete_table(table_name: str) -> Dict[str, Any]:
+async def delete_table(table_name: str, session_id: str) -> Dict[str, Any]:
     """
-    Delete a table from the database.
+    Delete a table from the session's database.
     
     This permanently removes the table and all its data.
     """
@@ -344,8 +374,16 @@ async def delete_table(table_name: str) -> Dict[str, Any]:
         )
     
     try:
-        db = get_database()
-        inspector = SchemaInspector()
+        from src.database import get_session_components
+        
+        # Get session-specific components
+        db_conn, inspector, executor, loader = get_session_components(session_id)
+        
+        if db_conn is None:
+            raise HTTPException(
+                status_code=400,
+                detail="No database connection found. Please connect to a database first."
+            )
         
         # Check if table exists
         if table_name not in inspector.get_table_names():
@@ -355,11 +393,11 @@ async def delete_table(table_name: str) -> Dict[str, Any]:
             )
         
         # Drop the table
-        with db.get_session() as session:
+        with db_conn.get_session() as session:
             session.execute(text(f"DROP TABLE IF EXISTS `{table_name}`"))
             session.commit()
         
-        logger.info(f"Deleted table: {table_name}")
+        logger.info(f"Deleted table: {table_name} for session {session_id}")
         
         return {
             "message": f"Successfully deleted table '{table_name}'",

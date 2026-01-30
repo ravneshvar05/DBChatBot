@@ -100,18 +100,27 @@ class SQLService:
         "| title | rating |\\n|---|---|\\n..."
     """
     
-    def __init__(self, memory_manager: Optional[MemoryManager] = None):
+    def __init__(
+        self,
+        memory_manager: Optional[MemoryManager] = None,
+        executor: Optional[QueryExecutor] = None,
+        schema_inspector: Optional[SchemaInspector] = None
+    ):
         """
         Initialize SQL service with required components.
         
         Args:
             memory_manager: Optional MemoryManager instance.
                           Uses global singleton if not provided.
+            executor: Optional QueryExecutor instance for session-specific execution.
+            schema_inspector: Optional SchemaInspector instance for session-specific schema.
         """
         self.llm = LLMClient()
         self.settings = get_settings()
-        self.executor = QueryExecutor()
-        self.schema_inspector = SchemaInspector()
+        
+        # Use provided or default components
+        self.executor = executor if executor is not None else QueryExecutor()
+        self.schema_inspector = schema_inspector if schema_inspector is not None else SchemaInspector()
         self.memory_manager = memory_manager or get_memory_manager()
         
         # Analytics components (Phase 5)

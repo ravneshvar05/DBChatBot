@@ -10,6 +10,16 @@ This module handles:
 - Conversation persistence (Phase 6)
 """
 from src.database.connection import DatabaseConnection, get_database
+from src.database.connection_manager import (
+    SessionConnectionManager, 
+    get_connection_manager,
+    DatabaseCredentials,
+    ConnectionInfo
+)
+from src.database.session_helper import (
+    ensure_default_connection,
+    get_session_components
+)
 from src.database.schema import SchemaInspector, TableInfo, ColumnInfo
 from src.database.loader import CSVLoader
 from src.database.executor import QueryExecutor, QueryResult
@@ -21,6 +31,14 @@ __all__ = [
     # Connection
     "DatabaseConnection",
     "get_database",
+    # Connection Manager (new)
+    "SessionConnectionManager",
+    "get_connection_manager",
+    "DatabaseCredentials",
+    "ConnectionInfo",
+    # Session Helpers (new)
+    "ensure_default_connection",
+    "get_session_components",
     # Schema
     "SchemaInspector",
     "TableInfo",

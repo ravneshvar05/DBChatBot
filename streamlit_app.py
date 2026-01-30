@@ -253,34 +253,15 @@ def send_message(message: str, include_analysis: bool = False) -> dict:
         return {"error": "Cannot connect to backend server."}
 
 
-def get_tables() -> list:
-    """Get list of database tables."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/database/schema", timeout=10)
-        if response.status_code == 200:
-            return response.json().get("tables", [])
-        return []
-    except:
-        return []
-
-
-def delete_table(table_name: str) -> dict:
-    """Delete a database table."""
-    try:
-        response = requests.delete(f"{API_BASE_URL}/database/tables/{table_name}", timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"error": response.json().get("detail", "Delete failed")}
-    except Exception as e:
-        return {"error": str(e)}
-
-
 def upload_csv(file) -> dict:
     """Upload a CSV file to the database."""
     try:
         files = {"file": (file.name, file.getvalue(), "text/csv")}
-        response = requests.post(f"{API_BASE_URL}/database/upload", files=files, timeout=120)
+        response = requests.post(
+            f"{API_BASE_URL}/database/upload?session_id={st.session_state.session_id}",
+            files=files,
+            timeout=120
+        )
         if response.status_code == 200:
             return response.json()
         elif response.status_code == 409:
@@ -291,16 +272,134 @@ def upload_csv(file) -> dict:
         return {"error": str(e)}
 
 
+def get_tables() -> list:
+    """Get list of tables in the database."""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/database/schema",
+            params={"session_id": st.session_state.session_id},
+            timeout=10
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("tables", [])
+        return []
+    except Exception as e:
+        st.error(f"Error fetching tables: {e}")
+        return []
+
+
+def delete_table(table_name: str) -> dict:
+    """Delete a table from the database."""
+    try:
+        response = requests.delete(
+            f"{API_BASE_URL}/database/tables/{table_name}",
+            params={"session_id": st.session_state.session_id},
+            timeout=10
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": response.json().get("detail", "Failed to delete")}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def clear_all_sessions() -> dict:
-    """Clear all conversation history."""
+    """Clear all session history."""
     try:
         response = requests.delete(f"{API_BASE_URL}/session/all", timeout=10)
         if response.status_code == 200:
-            return response.json()
+            return {"success": True}
         else:
             return {"error": response.json().get("detail", "Failed to clear")}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ============================================================
+# Database Connection API Functions
+# ============================================================
+
+def test_database_connection(db_type: str, host: str, port: int, database: str, username: str, password: str, use_ssl: bool) -> dict:
+    """Test database connection."""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/connection/test",
+            json={
+                "db_type": db_type,
+                "host": host,
+                "port": port,
+                "database": database,
+                "username": username,
+                "password": password,
+                "use_ssl": use_ssl
+            },
+            timeout=15
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            detail = response.json().get("detail", "Test failed")
+            return {"success": False, "message": str(detail)}
+    except Exception as e:
+        return {"success": False, "message": f"Connection error: {str(e)}"}
+
+
+def connect_database(db_type: str, host: str, port: int, database: str, username: str, password: str, use_ssl: bool) -> dict:
+    """Connect to a database for the session."""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/connection/connect",
+            json={
+                "session_id": st.session_state.session_id,
+                "db_type": db_type,
+                "host": host,
+                "port": port,
+                "database": database,
+                "username": username,
+                "password": password,
+                "use_ssl": use_ssl
+            },
+            timeout=15
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            detail = response.json().get("detail", "Connection failed")
+            return {"success": False, "message": str(detail)}
+    except Exception as e:
+        return {"success": False, "message": f"Connection error: {str(e)}"}
+
+
+def disconnect_database() -> dict:
+    """Disconnect from the current database."""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/connection/disconnect",
+            json={"session_id": st.session_state.session_id},
+            timeout=10
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"success": False, "message": "Disconnect failed"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+def get_connection_status() -> dict:
+    """Get the current database connection status."""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/connection/status/{st.session_state.session_id}",
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json()
+        return {"connected": False}
+    except:
+        return {"connected": False}
 
 
 def get_session_list() -> list:
@@ -345,6 +444,194 @@ def render_sidebar():
                     st.rerun()
             st.warning("Server is unreachable. Please check backend console.")
             return
+
+        st.divider()
+        
+        # 🔌 Database Connection Section
+        st.subheader("🔌 Database")
+        
+        conn_status = get_connection_status()
+        
+        if conn_status.get("connected"):
+            conn_info = conn_status.get("connection_info", {})
+            db_name = conn_info.get('database', 'Connected')
+            db_type = conn_info.get('db_type', '').upper()
+            host = conn_info.get('host', 'localhost')
+            
+            # Show connection details
+            st.success(f"✅ **{db_name}**")
+            st.caption(f"{db_type} @ {host}")
+            
+            # Disconnect button
+            if st.button("🔌 Disconnect", use_container_width=True, type="secondary"):
+                with st.spinner("Disconnecting..."):
+                    result = disconnect_database()
+                    if result.get("success"):
+                        st.toast("✅ Disconnected!")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {result.get('message')}")
+        else:
+            # Quick connect button for local database
+            st.caption("📍 Quick Actions")
+            if st.button("⚡ Connect to Local DB", use_container_width=True, type="primary", help="One-click connect using .env DATABASE_URL"):
+                with st.spinner("Connecting to local database..."):
+                    import os
+                    import re
+                    
+                    env_path = os.path.join(os.path.dirname(__file__), '.env')
+                    db_url = None
+                    
+                    if os.path.exists(env_path):
+                        with open(env_path, 'r') as f:
+                            for line in f:
+                                if line.startswith('DATABASE_URL='):
+                                    db_url = line.split('=', 1)[1].strip().strip('"').strip("'")
+                                    break
+                    
+                    if db_url:
+                        pattern = r"(?:mysql\+pymysql|mysql|postgresql)://([^:]+):([^@]+)@([^:/]+)(?::(\d+))?/([^?]+)"
+                        match = re.match(pattern, db_url)
+                        
+                        if match:
+                            username, password, host, port, database = match.groups()
+                            db_type = "mysql" if "mysql" in db_url else "postgresql"
+                            port = int(port) if port else (3306 if db_type == "mysql" else 5432)
+                            
+                            result = connect_database(db_type, host, port, database, username, password, False)
+                            
+                            if result.get("success"):
+                                st.toast("✅ Connected to local database!")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {result.get('message', 'Connection failed')}")
+                        else:
+                            st.error("❌ Could not parse DATABASE_URL from .env")
+                    else:
+                        st.warning("⚠️ No DATABASE_URL found in .env file")
+            
+            st.divider()
+            
+            with st.expander("📡 Connect to Database", expanded=False):
+                # Add tabs for different input methods
+                input_method = st.radio(
+                    "Input Method",
+                    ["📝 Manual Fields", "🔗 Database URL"],
+                    horizontal=True,
+                    label_visibility="collapsed"
+                )
+                
+                if input_method == "🔗 Database URL":
+                    st.caption("Enter complete database URL")
+                    db_url = st.text_input(
+                        "Database URL",
+                        placeholder="mysql://user:pass@host:port/dbname or postgresql://user:pass@host:port/dbname",
+                        help="Format: db_type://username:password@host:port/database",
+                        key="db_url_input"
+                    )
+                    use_ssl_url = st.checkbox("Use SSL/TLS", key="db_ssl_url")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("🧪 Test", use_container_width=True, key="test_url"):
+                            if db_url:
+                                # Parse URL
+                                import re
+                                pattern = r"(mysql|postgresql)://([^:]+):([^@]+)@([^:/]+)(?::(\d+))?/([^?]+)"
+                                match = re.match(pattern, db_url)
+                                
+                                if match:
+                                    db_type, username, password, host, port, database = match.groups()
+                                    port = int(port) if port else (3306 if db_type == "mysql" else 5432)
+                                    
+                                    with st.spinner("Testing..."):
+                                        result = test_database_connection(
+                                            db_type, host, port, database,
+                                            username, password, use_ssl_url
+                                        )
+                                        if result.get("success"):
+                                            st.success("✅ Connection OK!")
+                                        else:
+                                            st.error(f"❌ {result.get('message', 'Failed')}")
+                                else:
+                                    st.error("❌ Invalid URL format")
+                            else:
+                                st.warning("⚠️ Please enter database URL")
+                    
+                    with col2:
+                        if st.button("🔗 Connect", use_container_width=True, type="primary", key="connect_url"):
+                            if db_url:
+                                # Parse URL
+                                import re
+                                pattern = r"(mysql|postgresql)://([^:]+):([^@]+)@([^:/]+)(?::(\d+))?/([^?]+)"
+                                match = re.match(pattern, db_url)
+                                
+                                if match:
+                                    db_type, username, password, host, port, database = match.groups()
+                                    port = int(port) if port else (3306 if db_type == "mysql" else 5432)
+                                    
+                                    with st.spinner("Connecting..."):
+                                        result = connect_database(
+                                            db_type, host, port, database,
+                                            username, password, use_ssl_url
+                                        )
+                                        if result.get("success"):
+                                            st.toast("✅ Connected!")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ {result.get('message', 'Failed')}")
+                                else:
+                                    st.error("❌ Invalid URL format")
+                            else:
+                                st.warning("⚠️ Please enter database URL")
+                
+                else:  # Manual Fields
+                    st.caption("Enter connection details manually")
+                    db_type = st.selectbox("Database Type", ["mysql", "postgresql"], key="db_type_select")
+                    host = st.text_input("Host", value="localhost", key="db_host")
+                    port = st.number_input(
+                        "Port", 
+                        value=3306 if db_type == "mysql" else 5432, 
+                        min_value=1,
+                        max_value=65535,
+                        key="db_port"
+                    )
+                    database = st.text_input("Database Name", key="db_name")
+                    username = st.text_input("Username", key="db_user")
+                    password = st.text_input("Password", type="password", key="db_pass")
+                    use_ssl = st.checkbox("Use SSL/TLS (for cloud DBs)", key="db_ssl")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("🧪 Test", use_container_width=True, key="test_manual"):
+                            if all([host, database, username, password]):
+                                with st.spinner("Testing..."):
+                                    result = test_database_connection(
+                                        db_type, host, port, database,
+                                        username, password, use_ssl
+                                    )
+                                    if result.get("success"):
+                                        st.success("✅ Connection OK!")
+                                    else:
+                                        st.error(f"❌ {result.get('message', 'Failed')}")
+                            else:
+                                st.warning("⚠️ Please fill all fields")
+                    
+                    with col2:
+                        if st.button("🔗 Connect", use_container_width=True, type="primary", key="connect_manual"):
+                            if all([host, database, username, password]):
+                                with st.spinner("Connecting..."):
+                                    result = connect_database(
+                                        db_type, host, port, database,
+                                        username, password, use_ssl
+                                    )
+                                    if result.get("success"):
+                                        st.toast("✅ Connected!")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ {result.get('message', 'Failed')}")
+                            else:
+                                st.warning("⚠️ Please fill all fields")
 
         st.divider()
 
