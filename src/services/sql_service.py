@@ -557,10 +557,8 @@ class SQLService:
             # Format question
             context_parts.append(f"\n[Q{idx}] {msg['question']}")
             
-            # Format SQL with key details highlighted
+            # Format SQL - OPTIMIZED: Show only key components, not full SQL
             if msg['sql']:
-                sql_preview = msg['sql']
-                
                 # Extract key SQL components for easy reuse
                 tables_used = re.findall(r'FROM\s+(\w+)', msg['sql'], re.IGNORECASE)
                 where_clause = re.search(r'WHERE\s+(.+?)(?:GROUP BY|ORDER BY|LIMIT|$)', 
@@ -569,7 +567,7 @@ class SQLService:
                                     msg['sql'], re.IGNORECASE)
                 limit = re.search(r'LIMIT\s+(\d+)', msg['sql'], re.IGNORECASE)
                 
-                # Build structured SQL context
+                # Build structured SQL context (no full SQL - components are enough)
                 sql_details = []
                 if tables_used:
                     sql_details.append(f"Tables: {', '.join(set(tables_used))}")
@@ -580,7 +578,6 @@ class SQLService:
                 if limit:
                     sql_details.append(f"Limit: {limit.group(1)}")
                 
-                context_parts.append(f"   [SQL Used: {sql_preview}]")
                 if sql_details:
                     context_parts.append(f"   [Key Components: {' | '.join(sql_details)}]")
                 
@@ -594,9 +591,9 @@ class SQLService:
                 elif msg['row_count'] > 0:
                     context_parts.append(f"   [Result: {msg['row_count']} rows returned]")
             
-            # Format answer (truncated)
-            answer_preview = msg['answer'][:200]
-            if len(msg['answer']) > 200:
+            # OPTIMIZED: Shorter answer preview (100 chars instead of 200)
+            answer_preview = msg['answer'][:100]
+            if len(msg['answer']) > 100:
                 answer_preview += "..."
             context_parts.append(f"[A{idx}] {answer_preview}")
         

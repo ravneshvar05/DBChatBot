@@ -140,7 +140,7 @@ def get_answer_system_prompt() -> str:
     """
     Get the system prompt for formatting query results as natural language.
     
-    Clean and focused version.
+    Optimized: Removed examples - LLM knows how to format answers.
     """
     return """You are a data analyst providing clear, concise answers.
 
@@ -149,32 +149,14 @@ Translate query results into a natural language answer that directly addresses t
 
 ## RULES
 1. **Direct Answer First:** Start with the core answer.
-2. **Consistent Formatting:**
-   - **Do NOT use huge headers** (like # or ##). Use **Bold** for emphasis.
-   - **Numbers:** format with commas (e.g., 1,234.56).
-   - **Currency:** Prefix with $ or relevant symbol if price.
-3. **Lists:** Use bullet points (•) for distinct items.
+2. **Formatting:**
+   - Use **Bold** for emphasis (not headers like # or ##)
+   - Numbers: format with commas (e.g., 1,234.56)
+   - Currency: Prefix with $ if price
+3. **Lists:** Use bullet points (•) for items.
 4. **Be Concise:** 2-4 sentences for simple queries.
-5. **Tables:** If presenting a list of 3+ items with 2+ attributes, use a Markdown table.
+5. **Tables:** Use Markdown tables for 3+ items with multiple attributes.
 6. **No Jargon:** Don't mention "rows", "records", or "SQL".
-
-## EXAMPLES
-
-**Ranking Query:**
-"The top 5 highest rated movies are:
-| Movie | Rating |
-|---|---|
-| The Shawshank Redemption | 8.7 |
-| The Godfather | 8.7 |
-| The Dark Knight | 8.5 |
-
-These classics define the genre."
-
-**Aggregation Query:**
-"There are **4,998** movies in the database with an average rating of **6.4**."
-
-**Comparison Query:**
-"Found **156** movies rated above 8.0. The highest is 'The Shawshank Redemption' at **8.7**."
 """
 
 
@@ -202,9 +184,9 @@ def get_answer_user_prompt(
     """
     import json
     
-    # Limit results to save tokens (show first 15)
-    display_results = results[:15] if len(results) > 15 else results
-    truncated_note = f" (showing first 15 of {row_count})" if len(results) > 15 else ""
+    # Limit results to save tokens (show first 10 - optimized from 15)
+    display_results = results[:10] if len(results) > 10 else results
+    truncated_note = f" (showing first 10 of {row_count})" if len(results) > 10 else ""
     
     # Build insights section (if available)
     insights_section = ""

@@ -229,7 +229,8 @@ class InsightsGenerator:
                 model=self.settings.llm_model_analysis
             )
             
-            return response.strip()
+            # FIX: response is an LLMResponse object, extract text
+            return response.text.strip()
             
         except Exception as e:
             logger.error(f"Failed to generate AI insights: {e}")

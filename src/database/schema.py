@@ -247,12 +247,13 @@ class SchemaInspector:
                 col_desc = f"  - {col.name} ({col.type})"
                 
                 # For text columns, show sample values to help LLM understand categories
+                # OPTIMIZED: Reduced from 8 to 5 samples to save tokens while maintaining quality
                 if 'TEXT' in str(col.type).upper() or 'VARCHAR' in str(col.type).upper() or 'CHAR' in str(col.type).upper():
-                    samples = self.get_column_sample_values(table.name, col.name, limit=8)
+                    samples = self.get_column_sample_values(table.name, col.name, limit=5)
                     if samples:
-                        # Show up to 8 sample values
-                        sample_str = ", ".join(f"'{s}'" for s in samples[:8])
-                        if len(samples) > 8:
+                        # Show up to 5 sample values (reduced from 8)
+                        sample_str = ", ".join(f"'{s}'" for s in samples[:5])
+                        if len(samples) > 5:
                             sample_str += "..."
                         col_desc += f" [examples: {sample_str}]"
                 
